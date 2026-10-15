@@ -962,6 +962,8 @@ async def manga_loop():
             if not ready:
                 ready = await manga.setup(http, lambda m: print(f"[manga] {m}", flush=True))
                 print("[manga] Suwayomi configuré", flush=True)
+            if await manga.ensure_downloading(http):
+                print("[manga] téléchargement des chapitres relancé (il était à l'arrêt)", flush=True)
             await check_new_chapters()
         except manga.SuwayomiError as ex:
             print(f"[manga] {ex}", flush=True)

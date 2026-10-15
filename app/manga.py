@@ -235,6 +235,17 @@ async def downloads(http):
     return st["state"] == "STARTED", out
 
 
+
+async def ensure_downloading(http):
+    """Relance le téléchargeur s'il reste des chapitres en file mais qu'il est à l'arrêt
+    (ex. après un redémarrage du NAS ou de Suwayomi). Renvoie True s'il a fallu le relancer."""
+    data = await gql(http, "query { downloadStatus { state queue { state } } }", timeout=20)
+    st = data["downloadStatus"]
+    if st["state"] == "STARTED" or not any(q["state"] in ("QUEUED", "DOWNLOADING") for q in st["queue"]):
+        return False
+    await gql(http, "mutation { startDownloader(input: {}) { downloadStatus { state } } }")
+    return True
+
 async def retry_errors(http, chapter_ids):
     """Remet en file les chapitres en erreur et relance le téléchargeur."""
     if chapter_ids:
