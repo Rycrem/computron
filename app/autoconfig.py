@@ -3,7 +3,7 @@ Configuration automatique de la stack, lancée par le bot au démarrage.
 Tout est idempotent : rien n'est ajouté deux fois.
 
   - lit les clés API générées par Radarr, Sonarr et Jackett dans leurs fichiers de config
-  - Jackett  : branche FlareSolverr + ajoute les indexeurs listés dans JACKETT_INDEXERS
+  - Jackett  : débranche l'ancien FlareSolverr + ajoute les indexeurs listés dans JACKETT_INDEXERS
   - Radarr   : dossier /data/Films, client qBittorrent, indexeur Jackett
   - Sonarr   : dossier /data/Séries, client qBittorrent, indexeur Jackett
 """
@@ -130,10 +130,11 @@ async def setup_jackett(log):
     s = await jackett_session()
     try:
         cfg = await _json(s, "GET", f"{JACKETT}/api/v2.0/server/config")
-        if isinstance(cfg, dict) and cfg.get("flaresolverrurl") != "http://flaresolverr:8191":
-            cfg["flaresolverrurl"] = "http://flaresolverr:8191"
+        # FlareSolverr a été retiré du stack (Chromium plante sur le NAS ARM) : on le débranche
+        if isinstance(cfg, dict) and cfg.get("flaresolverrurl") == "http://flaresolverr:8191":
+            cfg["flaresolverrurl"] = ""
             await _json(s, "POST", f"{JACKETT}/api/v2.0/server/config", json=cfg)
-            log("Jackett : FlareSolverr branché")
+            log("Jackett : FlareSolverr débranché")
 
         configured = {i["id"] for i in await _json(s, "GET", f"{JACKETT}/api/v2.0/indexers?configured=true")}
         for idx in jackett_indexers_wanted():

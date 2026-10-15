@@ -24,7 +24,7 @@ EXTENSIONS = [
     "fr.animesama",          # Anime-Sama : gros catalogue FR
     "fr.mangasoriginesfr",   # Mangas-Origines : manhwas FR
     "fr.raijinscans",        # Raijin Scans : manhwas FR
-    "fr.japscan",            # Japscan : gros catalogue FR (parfois protégé, passe par FlareSolverr)
+    "fr.japscan",            # Japscan : gros catalogue FR (parfois protégé par Cloudflare : peut échouer)
     "en.weebcentral",        # Weeb Central : gros catalogue manga EN
     "en.asurascans",         # Asura Scans : manhwas EN
     "en.flamecomics",        # Flame Comics : manhwas EN

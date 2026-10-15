@@ -35,7 +35,7 @@ Une seule installation Docker : seuls 3 secrets et 3 dossiers sont à renseigner
 |---|---|---|
 | `arr-bot` | Bot Discord + configuration automatique de tout le reste | — |
 | `radarr` / `sonarr` | Recherche, téléchargement et rangement des films / séries | 7878 / 8989 |
-| `jackett` + `flaresolverr` | Interrogent les trackers (IPTorrents, nekoBT, Nyaa.si) | 9117 / 8191 |
+| `jackett` | Interroge les trackers (IPTorrents, nekoBT, Nyaa.si) | 9117 |
 | `qbittorrent` | Client torrent | 8080 |
 | `suwayomi` | Mangas / manhwas chapitre par chapitre (sources FR puis EN) | 4567 |
 | `init` | Prépare les dossiers et qBittorrent au démarrage, puis s'arrête | — |
@@ -147,4 +147,4 @@ Ce projet automatise des outils libres existants. Utilise-le uniquement pour des
 
 ## Crédits
 
-[Radarr](https://radarr.video) · [Sonarr](https://sonarr.tv) · [Jackett](https://github.com/Jackett/Jackett) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) · [qBittorrent](https://www.qbittorrent.org) · [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server) · [discord.py](https://github.com/Rapptz/discord.py) · images [LinuxServer.io](https://www.linuxserver.io)
+[Radarr](https://radarr.video) · [Sonarr](https://sonarr.tv) · [Jackett](https://github.com/Jackett/Jackett) · [qBittorrent](https://www.qbittorrent.org) · [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server) · [discord.py](https://github.com/Rapptz/discord.py) · images [LinuxServer.io](https://www.linuxserver.io)
