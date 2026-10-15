@@ -4,6 +4,7 @@ Bot Discord tout-en-un — rien à configurer à part DISCORD_TOKEN.
   /serie <titre>  -> ajoute une série dans Sonarr et lance la recherche
   /qb             -> torrents en cours et terminés (seeders inclus) + menu pour annuler / retirer
   /manga <titre>  -> manga / manhwa via Suwayomi (VF en priorité, sinon anglais)
+  /mangas         -> avancement des téléchargements de mangas (aussi en onglet dans /qb)
   /etat           -> vérifie que tout est bien branché (Radarr, Sonarr, Jackett, qBittorrent)
   /notifications  -> choisit le salon où annoncer les films et épisodes prêts à regarder
   /suivre <titre> -> être prévenu en message privé (le demandeur l'est automatiquement)
@@ -402,6 +403,7 @@ class QbView(BaseView):
                                     style=discord.ButtonStyle.primary if key == filtre else discord.ButtonStyle.secondary)
             btn.callback = self._goto(key, 0)
             self.add_item(btn)
+        self.add_item(mangas_tab_button())
 
         prev = discord.ui.Button(emoji="◀️", row=1, disabled=page == 0, style=discord.ButtonStyle.secondary)
         prev.callback = self._goto(filtre, page - 1)
@@ -488,6 +490,127 @@ class QbView(BaseView):
                                    (self.origin, self.filtre, self.page)),
             ephemeral=True)
 
+
+
+# ---------- Mangas (file de Suwayomi) ----------
+MANGA_PAGE = 8
+
+
+async def mangas_embed(page=0):
+    """Renvoie (embed, chapitres en erreur, téléchargeur utile et en marche ?, page corrigée, nombre de pages)."""
+    running, groups = await manga.downloads(http)
+    pages = max(1, -(-len(groups) // MANGA_PAGE))
+    page = min(max(page, 0), pages - 1)
+    e = discord.Embed(title="📥 Téléchargements — 📚 Mangas", color=0x2F80ED)
+    if not groups:
+        e.description = "Aucun chapitre en cours de téléchargement. 🎉"
+    for g in groups[page * MANGA_PAGE:(page + 1) * MANGA_PAGE]:
+        lines = []
+        if g["total"]:
+            p = min(g["done"] / g["total"], 1)
+            lines.append(f"`{bar(p)}` **{g['done']}/{g['total']} chapitres**")
+        if g["current"]:
+            lines.append(f"⬇️ {g['current'][:80]} ({g['progress'] * 100:.0f} %)")
+        rest = [f"🕒 {g['queued']} en file"] if g["queued"] else []
+        if g["errors"]:
+            rest.append(f"⚠️ {len(g['errors'])} en erreur")
+        if rest:
+            lines.append(" · ".join(rest))
+        e.add_field(name=g["title"][:250], value="\n".join(lines) or "—", inline=False)
+    errors = [c for g in groups for c in g["errors"]]
+    pending = sum(g["queued"] + (1 if g["current"] else 0) for g in groups)
+    if pending and not running:
+        e.description = "⏸️ Le téléchargement des chapitres est à l'arrêt : clique sur 🔁 pour le relancer."
+    state = "▶️ en marche" if running else "⏸️ à l'arrêt"
+    e.set_footer(text=f"Page {page + 1}/{pages} · {len(groups)} manga(s) · {pending} chapitre(s) à télécharger · "
+                      f"{len(errors)} en erreur · téléchargeur {state}")
+    return e, errors, running or not pending, page, pages
+
+
+async def show_mangas(interaction: discord.Interaction, page=0):
+    """Affiche (ou rafraîchit) l'onglet Mangas dans le message caché de l'interaction."""
+    embed, errors, running, p, pages = await mangas_embed(page)
+    await interaction.edit_original_response(embed=embed, view=MangaQueueView(errors, running, p, pages))
+
+
+def mangas_tab_button(current=False):
+    btn = discord.ui.Button(label="📚 Mangas", row=0, disabled=current,
+                            style=discord.ButtonStyle.primary if current else discord.ButtonStyle.secondary)
+
+    async def callback(interaction: discord.Interaction):
+        if not allowed(interaction):
+            return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
+        await interaction.response.defer()
+        try:
+            await show_mangas(interaction)
+        except Exception as ex:
+            await interaction.followup.send(f"❌ Suwayomi : {ex}", ephemeral=True)
+    btn.callback = callback
+    return btn
+
+
+class MangaQueueView(BaseView):
+    """Onglet Mangas : avancement manga par manga, avec les mêmes onglets que /qb."""
+    def __init__(self, errors, running, page=0, pages=1):
+        super().__init__(timeout=840)
+        self.errors, self.page = errors, page
+        for key, label in QB_FILTERS.items():
+            btn = discord.ui.Button(label=label, row=0, style=discord.ButtonStyle.secondary)
+            btn.callback = self._goto_qb(key)
+            self.add_item(btn)
+        self.add_item(mangas_tab_button(current=True))
+
+        prev = discord.ui.Button(emoji="◀️", row=1, disabled=page == 0, style=discord.ButtonStyle.secondary)
+        prev.callback = self._goto(page - 1)
+        nxt = discord.ui.Button(emoji="▶️", row=1, disabled=page >= pages - 1, style=discord.ButtonStyle.secondary)
+        nxt.callback = self._goto(page + 1)
+        refresh = discord.ui.Button(label="Actualiser", emoji="🔄", row=1, style=discord.ButtonStyle.secondary)
+        refresh.callback = self._goto(page)
+        for b in (prev, nxt, refresh):
+            self.add_item(b)
+        if errors or not running:
+            label = f"Réessayer les {len(errors)} erreur(s)" if errors else "Relancer"
+            retry = discord.ui.Button(label=label, emoji="🔁", row=1, style=discord.ButtonStyle.primary)
+            retry.callback = self.on_retry
+            self.add_item(retry)
+
+    async def _check(self, interaction):
+        if not allowed(interaction):
+            await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
+            return False
+        await interaction.response.defer()  # répondre à Discord avant le délai de 3 s
+        return True
+
+    def _goto(self, page):
+        async def callback(interaction: discord.Interaction):
+            if not await self._check(interaction):
+                return
+            try:
+                await show_mangas(interaction, page)
+            except Exception as ex:
+                await interaction.followup.send(f"❌ Suwayomi : {ex}", ephemeral=True)
+        return callback
+
+    def _goto_qb(self, filtre):
+        async def callback(interaction: discord.Interaction):
+            if not await self._check(interaction):
+                return
+            try:
+                embed, chunk, p, pages = await qb_embed(filtre)
+                await interaction.edit_original_response(embed=embed, view=QbView(chunk, filtre, p, pages, interaction))
+            except Exception as ex:
+                await interaction.followup.send(f"❌ {ex}", ephemeral=True)
+        return callback
+
+    async def on_retry(self, interaction: discord.Interaction):
+        if not await self._check(interaction):
+            return
+        try:
+            await manga.retry_errors(http, self.errors)
+            await asyncio.sleep(2)  # laisser Suwayomi reprendre avant de réafficher
+            await show_mangas(interaction, self.page)
+        except Exception as ex:
+            await interaction.followup.send(f"❌ Suwayomi : {ex}", ephemeral=True)
 
 # ---------- Menu de choix ----------
 class PickView(BaseView):
@@ -992,6 +1115,19 @@ async def qb(interaction: discord.Interaction, afficher: str = "actifs"):
         await interaction.followup.send(f"❌ {ex}", ephemeral=True)
 
 
+
+@bot.tree.command(name="mangas", description="Voir l'avancement des téléchargements de mangas (Suwayomi)")
+async def mangas_cmd(interaction: discord.Interaction):
+    if not allowed(interaction):
+        return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        embed, errors, running, page, pages = await mangas_embed()
+        await interaction.followup.send(embed=embed, view=MangaQueueView(errors, running, page, pages),
+                                        ephemeral=True)
+    except Exception as ex:
+        await interaction.followup.send(f"❌ Suwayomi : {ex}", ephemeral=True)
+
 @bot.tree.command(name="notifications", description="Choisir le salon où annoncer les films et épisodes prêts")
 @app_commands.describe(activer="Oui : annoncer dans ce salon. Non : arrêter les annonces.")
 @app_commands.default_permissions(manage_guild=True)
@@ -1141,7 +1277,9 @@ async def help_cmd(interaction: discord.Interaction):
         "listent tous les torrents de qBittorrent.\n"
         "Son menu **Retirer ou annuler un torrent…** : un téléchargement en cours peut être annulé "
         "ou remplacé par une autre version, un torrent terminé retiré (avec ou sans ses fichiers). "
-        "🧹 retire d'un coup tous les terminés déjà rangés."))
+        "🧹 retire d'un coup tous les terminés déjà rangés.\n"
+        "`/mangas` (ou l'onglet **📚 Mangas** de `/qb`) — chapitres téléchargés / total pour chaque manga, "
+        "chapitre en cours, file d'attente, et 🔁 pour réessayer les chapitres en erreur."))
     e.add_field(name="🔔 Être prévenu", inline=False, value=(
         "Celui qui fait la demande reçoit un message privé quand c'est prêt.\n"
         "`/suivre titre:…` ou le bouton **Me notifier** — être prévenu aussi (re-cliquer pour arrêter).\n"
