@@ -1,6 +1,6 @@
 # ==================================================================
 #  Médiathèque automatique pilotée par Discord
-#  Radarr + Sonarr + Jackett + FlareSolverr + qBittorrent + Suwayomi + bot Discord
+#  Radarr + Sonarr + Jackett + qBittorrent + Suwayomi + bot Discord
 #
 #  Aucune valeur personnelle ici : tout se règle dans le fichier .env
 #  (copie .env.example en .env, à côté de ce fichier, puis remplis-le).
@@ -65,8 +65,7 @@ services:
       TZ: "${TZ:-Europe/Paris}"
       DOWNLOAD_AS_CBZ: "true"
       UPDATE_INTERVAL: "6"   # recherche de nouveaux chapitres toutes les 6 h
-      FLARESOLVERR_ENABLED: "true"
-      FLARESOLVERR_URL: "http://flaresolverr:8191"
+      FLARESOLVERR_ENABLED: "false"   # FlareSolverr retiré (Chromium plante sur le NAS ARM)
       EXTENSION_STORES: '["https://github.com/keiyoushi/extensions/raw/repo/index.pb"]'
     volumes:
       - "${MANGA_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads/mangas"
@@ -105,17 +104,6 @@ services:
       - "${CONFIG_DIR}/jackett:/config"
     ports:
       - "9117:9117"
-    restart: unless-stopped
-
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
-    # Chromium peut planter (« chrome not reachable ») avec les 64 Mo de mémoire partagée par défaut
-    shm_size: "1gb"
-    environment:
-      TZ: "${TZ:-Europe/Paris}"
-    ports:
-      - "8191:8191"
     restart: unless-stopped
 
   radarr:
