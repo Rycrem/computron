@@ -110,6 +110,8 @@ services:
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
+    # Chromium peut planter (« chrome not reachable ») avec les 64 Mo de mémoire partagée par défaut
+    shm_size: "1gb"
     environment:
       TZ: "${TZ:-Europe/Paris}"
     ports:

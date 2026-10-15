@@ -98,6 +98,12 @@ async def setup_iptorrents(s, log):
         log(f"Jackett : IPTorrents refusé ({ex})")
 
 
+def why(ex):
+    """Texte lisible d'une erreur (certaines, comme un délai dépassé, n'ont pas de message)."""
+    return str(ex).strip() or {"TimeoutError": "pas de réponse à temps (l'appli démarre encore ?)"}.get(
+        type(ex).__name__, type(ex).__name__)
+
+
 async def _json(session, method, url, **kw):
     async with session.request(method, url, **kw) as r:
         if r.status >= 400:
@@ -111,8 +117,12 @@ async def jackett_session():
     """Jackett sans mot de passe admin : visiter le tableau de bord donne le cookie de session."""
     s = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True),
                               timeout=aiohttp.ClientTimeout(total=60))
-    async with s.get(f"{JACKETT}/UI/Dashboard") as r:
-        await r.read()
+    try:
+        async with s.get(f"{JACKETT}/UI/Dashboard") as r:
+            await r.read()
+    except BaseException:
+        await s.close()  # Jackett pas encore démarré : ne pas laisser la session ouverte
+        raise
     return s
 
 
@@ -390,7 +400,7 @@ async def run(log=print):
     try:
         await setup_jackett(log)
     except Exception as ex:  # non bloquant : Radarr/Sonarr peuvent être configurés quand même
-        log(f"Jackett : réglages ignorés pour l'instant ({ex})")
+        log(f"Jackett : réglages ignorés pour l'instant ({why(ex)})")
     try:
         anims = media_dir(ANIME_DIR_ALIASES, "Anims")
         await setup_arr("Radarr", RADARR, rk, [media_dir({"films"}, "Films"), anims],
@@ -398,16 +408,16 @@ async def run(log=print):
         await setup_arr("Sonarr", SONARR, sk, [media_dir({"series"}, "Séries"), anims],
                         "tvCategory", "tv-sonarr", jk, log)
     except Exception as ex:
-        log(f"Configuration pas encore possible : {ex}")
+        log(f"Configuration pas encore possible : {why(ex)}")
         return False
     for name, url, key in (("Radarr", RADARR, rk), ("Sonarr", SONARR, sk)):
         try:
             await setup_preferences(name, url, key, log)
         except Exception as ex:  # non bloquant
-            log(f"{name} : préférences VO/seeders non appliquées ({ex})")
+            log(f"{name} : préférences VO/seeders non appliquées ({why(ex)})")
         try:
             await setup_webhook(name, url, key, log)
         except Exception as ex:  # non bloquant
-            log(f"{name} : notifications non activées ({ex})")
+            log(f"{name} : notifications non activées ({why(ex)})")
     log("Configuration automatique terminée ✔")
     return True
