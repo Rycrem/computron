@@ -4,7 +4,8 @@
 #
 #  Aucune valeur personnelle ici : tout se règle dans le fichier .env
 #  (copie .env.example en .env, à côté de ce fichier, puis remplis-le).
-#  Tout le reste se configure tout seul au premier démarrage.
+#  Tout le reste se configure tout seul au premier démarrage, et le code
+#  du bot se met à jour depuis GitHub à chaque redémarrage (voir app/maj_code.py).
 # ==================================================================
 
 x-ids: &ids
@@ -17,15 +18,16 @@ services:
   arr-bot:
     image: python:3.12-slim
     container_name: arr-bot
-    working_dir: /app
-    command: sh -c "pip install --no-cache-dir -q discord.py aiohttp tzdata && python -u bot.py"
+    # À chaque démarrage : récupère la dernière version du code sur GitHub, puis lance le bot
+    command: sh -c "python -u /livre/maj_code.py && pip install --no-cache-dir -q discord.py aiohttp tzdata && cd /code/app && exec python -u bot.py"
     env_file:
       - .env                  # DISCORD_TOKEN, IPT_COOKIE, IPT_USERAGENT… (jamais publiés)
     environment:
       TZ: "${TZ:-Europe/Paris}"
     volumes:
-      - "./app:/app:ro"
-      - "${CONFIG_DIR:?CONFIG_DIR manquant dans .env}:/cfg:ro"
+      - "./app:/livre:ro"                    # code livré avec le projet (secours)
+      - "${CONFIG_DIR:?CONFIG_DIR manquant dans .env}/arr-bot-code:/code"   # code à jour
+      - "${CONFIG_DIR}:/cfg:ro"
       - "${MEDIA_DIR:?MEDIA_DIR manquant dans .env}:/data:ro"
       - "${CONFIG_DIR}/arr-bot-data:/state"
     depends_on:
@@ -39,11 +41,16 @@ services:
   init:
     image: python:3.12-slim
     container_name: media-init
-    command: python -u /app/init_qbit.py
+    command: sh -c "python -u /livre/maj_code.py && python -u /code/app/init_qbit.py"
     environment:
       <<: *ids
+      MAJ_AUTO: "${MAJ_AUTO:-oui}"
+      CODE_REPO: "${CODE_REPO:-}"
+      CODE_BRANCH: "${CODE_BRANCH:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     volumes:
-      - "./app:/app:ro"
+      - "./app:/livre:ro"
+      - "${CONFIG_DIR:?CONFIG_DIR manquant dans .env}/arr-bot-code:/code"
       - "${CONFIG_DIR}:/cfg"
       - "${MEDIA_DIR}:/data"
       - "${MANGA_DIR:?MANGA_DIR manquant dans .env}:/comics"
