@@ -2,7 +2,7 @@
 Bot Discord tout-en-un — rien à configurer à part DISCORD_TOKEN.
   /film <titre>   -> ajoute un film dans Radarr et lance la recherche
   /serie <titre>  -> ajoute une série dans Sonarr et lance la recherche
-  /qb             -> avancement des téléchargements (seeders inclus) + menu pour annuler
+  /qb             -> torrents en cours et terminés (seeders inclus) + menu pour annuler / retirer
   /manga <titre>  -> manga / manhwa via Suwayomi (VF en priorité, sinon anglais)
   /etat           -> vérifie que tout est bien branché (Radarr, Sonarr, Jackett, qBittorrent)
   /notifications  -> choisit le salon où annoncer les films et épisodes prêts à regarder
@@ -122,6 +122,9 @@ STATES = {
     "stalledDL": "⏳ Bloqué (pas de sources)", "queuedDL": "🕒 En file", "pausedDL": "⏸️ Pause",
     "stoppedDL": "⏸️ Arrêté", "checkingDL": "🔍 Vérification", "moving": "📦 Déplacement",
     "error": "❌ Erreur", "missingFiles": "❌ Fichiers manquants",
+    "uploading": "🌱 En partage", "forcedUP": "🌱 Partage forcé", "stalledUP": "✅ Terminé",
+    "queuedUP": "✅ Terminé", "pausedUP": "✅ Terminé (partage arrêté)",
+    "stoppedUP": "✅ Terminé (partage arrêté)", "checkingUP": "🔍 Vérification",
 }
 
 
@@ -152,27 +155,65 @@ def seeds(t):
     return f"🌱 {t.get('num_seeds', 0)}/{total if total >= 0 else '?'}"
 
 
-async def qb_embed():
+QB_FILTERS = {"actifs": "⬇️ En cours", "termines": "✅ Terminés", "tous": "📋 Tous"}
+QB_PAGE = 8
+
+
+def qb_filter(torrents, filtre):
+    if filtre == "actifs":
+        return [t for t in torrents if t["progress"] < 1]
+    if filtre == "termines":
+        return [t for t in torrents if t["progress"] >= 1]
+    return torrents
+
+
+def qb_field(t):
+    state = STATES.get(t["state"], t["state"])
+    if t["progress"] >= 1:
+        up = f" · ↑ {size(t['upspeed'])}/s" if t.get("upspeed") else ""
+        return (f"{state} · {size(t['size'])} · ratio {t.get('ratio', 0):.2f}{up}"
+                + (f" · fini <t:{t['completion_on']}:R>" if t.get("completion_on", 0) > 0 else ""))
+    speed = f"{size(t['dlspeed'])}/s" if t["dlspeed"] else "—"
+    return (f"`{bar(t['progress'])}` **{t['progress'] * 100:.1f}%**\n"
+            f"{state} · {speed} · ETA {eta(t['eta'])} · {size(t['size'])} · {seeds(t)}")
+
+
+async def qb_embed(filtre="actifs", page=0):
+    """Renvoie (embed, torrents de la page, page corrigée, nombre de pages)."""
     torrents = await qb_torrents()
-    active = [t for t in torrents if t["progress"] < 1]
-    done = len(torrents) - len(active)
-    e = discord.Embed(title="📥 Téléchargements", color=0x2F80ED)
-    if not active:
-        e.description = "Aucun téléchargement en cours. 🎉"
-    for t in active[:15]:
-        speed = f"{size(t['dlspeed'])}/s" if t["dlspeed"] else "—"
-        e.add_field(
-            name=t["name"][:250],
-            value=(f"`{bar(t['progress'])}` **{t['progress'] * 100:.1f}%**\n"
-                   f"{STATES.get(t['state'], t['state'])} · {speed} · ETA {eta(t['eta'])} · "
-                   f"{size(t['size'])} · {seeds(t)}"),
-            inline=False,
-        )
-    if len(active) > 15:
-        e.add_field(name="…", value=f"+{len(active) - 15} autres", inline=False)
-    e.set_footer(text=f"{len(active)} en cours · {done} terminés · ↓ {size(sum(t['dlspeed'] for t in torrents))}/s"
-                      f" · 🌱 seeders connectés/disponibles")
-    return e, active
+    shown = qb_filter(torrents, filtre)
+    pages = max(1, -(-len(shown) // QB_PAGE))
+    page = min(max(page, 0), pages - 1)
+    chunk = shown[page * QB_PAGE:(page + 1) * QB_PAGE]
+    active = sum(1 for t in torrents if t["progress"] < 1)
+    e = discord.Embed(title=f"📥 Téléchargements — {QB_FILTERS[filtre]}", color=0x2F80ED)
+    if not shown:
+        e.description = {"actifs": "Aucun téléchargement en cours. 🎉",
+                         "termines": "Aucun torrent terminé dans qBittorrent."}.get(filtre, "qBittorrent est vide.")
+    for t in chunk:
+        e.add_field(name=t["name"][:250], value=qb_field(t), inline=False)
+    e.set_footer(text=f"Page {page + 1}/{pages} · {active} en cours · {len(torrents) - active} terminés · "
+                      f"↓ {size(sum(t['dlspeed'] for t in torrents))}/s · "
+                      f"↑ {size(sum(t.get('upspeed', 0) for t in torrents))}/s · 🌱 seeders connectés/disponibles")
+    return e, chunk, page, pages
+
+
+async def qb_delete(hashes, delete_files: bool):
+    async with http.post(f"{ac.QBIT}/api/v2/torrents/delete", headers={"Referer": ac.QBIT},
+                         data={"hashes": "|".join(hashes), "deleteFiles": "true" if delete_files else "false"}) as r:
+        if r.status != 200:
+            raise RuntimeError(f"qBittorrent a répondu {r.status}")
+
+
+async def refresh_qb_message(message, filtre, page):
+    """Remet à jour le tableau /qb après une suppression (sans bloquer si le message a disparu)."""
+    if not message:
+        return
+    try:
+        embed, chunk, page, pages = await qb_embed(filtre, page)
+        await message.edit(embed=embed, view=QbView(chunk, filtre, page, pages))
+    except Exception as ex:
+        print(f"[discord] actualisation de /qb impossible : {ex}", flush=True)
 
 
 # ---------- Gestion des interactions expirées ----------
@@ -190,6 +231,15 @@ class BaseView(discord.ui.View):
 
 
 # ---------- Annulation ----------
+async def queued_hashes():
+    """Hashes des torrents que Radarr ou Sonarr n'ont pas encore rangés dans la médiathèque."""
+    hashes = set()
+    for arr in (radarr, sonarr):
+        q = await arr._req("GET", "queue", params={"pageSize": 1000})
+        hashes |= {(r.get("downloadId") or "").upper() for r in q.get("records", [])}
+    return hashes
+
+
 async def find_in_queue(torrent_hash):
     """Retrouve le téléchargement dans la file de Radarr ou Sonarr (downloadId = hash du torrent)."""
     h = torrent_hash.upper()
@@ -269,9 +319,10 @@ async def relaunch(arr: "Arr", item):
 
 
 class ConfirmCancelView(BaseView):
-    def __init__(self, torrent_hash, name):
+    """Torrent pas encore terminé."""
+    def __init__(self, torrent_hash, name, parent=None):
         super().__init__(timeout=120)
-        self.hash, self.name = torrent_hash, name
+        self.hash, self.name, self.parent = torrent_hash, name, parent
 
     async def _do(self, interaction, retry):
         await interaction.response.edit_message(content=f"⏳ Traitement de **{self.name[:80]}**…", view=None)
@@ -280,6 +331,8 @@ class ConfirmCancelView(BaseView):
             await interaction.edit_original_response(content=f"✅ **{self.name[:80]}**\n{msg}")
         except Exception as ex:
             await interaction.edit_original_response(content=f"❌ {ex}")
+        if self.parent:
+            await refresh_qb_message(*self.parent)
 
     @discord.ui.button(label="Annuler définitivement", emoji="🗑️", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction, _):
@@ -294,38 +347,133 @@ class ConfirmCancelView(BaseView):
         await interaction.response.edit_message(content="Rien n'a été modifié.", view=None)
 
 
+class ConfirmRemoveView(BaseView):
+    """Torrent terminé : le retirer de qBittorrent, avec ou sans ses fichiers téléchargés."""
+    def __init__(self, hashes, label, parent=None):
+        super().__init__(timeout=120)
+        self.hashes, self.label, self.parent = hashes, label, parent
+
+    async def _do(self, interaction, delete_files):
+        await interaction.response.edit_message(content=f"⏳ Retrait de {self.label}…", view=None)
+        try:
+            await qb_delete(self.hashes, delete_files)
+            detail = ("fichiers du dossier Téléchargements supprimés, la copie rangée dans la médiathèque est conservée"
+                      if delete_files else "fichiers conservés sur le disque")
+            await interaction.edit_original_response(content=f"✅ {self.label} retiré de qBittorrent ({detail}).")
+        except Exception as ex:
+            await interaction.edit_original_response(content=f"❌ {ex}")
+        if self.parent:
+            await refresh_qb_message(*self.parent)
+
+    @discord.ui.button(label="Retirer (garder les fichiers)", emoji="➖", style=discord.ButtonStyle.primary)
+    async def keep(self, interaction, _):
+        await self._do(interaction, delete_files=False)
+
+    @discord.ui.button(label="Retirer et supprimer les fichiers", emoji="🗑️", style=discord.ButtonStyle.danger)
+    async def wipe(self, interaction, _):
+        await self._do(interaction, delete_files=True)
+
+    @discord.ui.button(label="Retour", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction, _):
+        await interaction.response.edit_message(content="Rien n'a été modifié.", view=None)
+
+
 class QbView(BaseView):
-    def __init__(self, active):
-        super().__init__(timeout=600)
-        self.names = {t["hash"]: t["name"] for t in active}
-        if active:
+    def __init__(self, chunk, filtre="actifs", page=0, pages=1):
+        super().__init__(timeout=900)
+        self.filtre, self.page, self.pages = filtre, page, pages
+        self.torrents = {t["hash"]: t for t in chunk}
+
+        for key, label in QB_FILTERS.items():
+            btn = discord.ui.Button(label=label, row=0, disabled=key == filtre,
+                                    style=discord.ButtonStyle.primary if key == filtre else discord.ButtonStyle.secondary)
+            btn.callback = self._goto(key, 0)
+            self.add_item(btn)
+
+        prev = discord.ui.Button(emoji="◀️", row=1, disabled=page == 0, style=discord.ButtonStyle.secondary)
+        prev.callback = self._goto(filtre, page - 1)
+        nxt = discord.ui.Button(emoji="▶️", row=1, disabled=page >= pages - 1, style=discord.ButtonStyle.secondary)
+        nxt.callback = self._goto(filtre, page + 1)
+        refresh = discord.ui.Button(label="Actualiser", emoji="🔄", row=1, style=discord.ButtonStyle.secondary)
+        refresh.callback = self._goto(filtre, page)
+        for b in (prev, nxt, refresh):
+            self.add_item(b)
+        if filtre != "actifs":
+            clean = discord.ui.Button(label="Retirer tous les terminés", emoji="🧹", row=1,
+                                      style=discord.ButtonStyle.danger)
+            clean.callback = self.on_clean
+            self.add_item(clean)
+
+        if chunk:
             select = discord.ui.Select(
-                placeholder="Annuler un téléchargement…",
-                options=[discord.SelectOption(label=t["name"][:100], value=t["hash"],
-                                              description=f"{t['progress'] * 100:.0f}% · {size(t['size'])} · {seeds(t)}"[:100])
-                         for t in active[:25]])
+                placeholder="Retirer ou annuler un torrent…", row=2,
+                options=[discord.SelectOption(
+                    label=t["name"][:100], value=t["hash"], emoji="✅" if t["progress"] >= 1 else "⬇️",
+                    description=(f"Terminé · {size(t['size'])} · ratio {t.get('ratio', 0):.2f}" if t["progress"] >= 1
+                                 else f"{t['progress'] * 100:.0f}% · {size(t['size'])} · {seeds(t)}")[:100])
+                    for t in chunk])
             select.callback = self.on_select
             self.add_item(select)
+
+    def _goto(self, filtre, page):
+        async def callback(interaction: discord.Interaction):
+            if not allowed(interaction):
+                return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
+            await interaction.response.defer()  # répondre à Discord avant le délai de 3 s
+            try:
+                embed, chunk, p, pages = await qb_embed(filtre, page)
+                await interaction.edit_original_response(embed=embed, view=QbView(chunk, filtre, p, pages))
+            except Exception as ex:
+                await interaction.followup.send(f"❌ {ex}", ephemeral=True)
+        return callback
 
     async def on_select(self, interaction: discord.Interaction):
         if not allowed(interaction):
             return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
         h = interaction.data["values"][0]
-        name = self.names.get(h, "ce téléchargement")
-        await interaction.response.send_message(
-            f"Que faire de **{name[:150]}** ?\n"
-            f"• **Annuler définitivement** : supprime le téléchargement et retire le titre de Radarr/Sonarr (tu pourras le redemander).\n"
-            f"• **Chercher une autre version** : écarte ce torrent et en prend un autre.",
-            view=ConfirmCancelView(h, name), ephemeral=True)
+        t = self.torrents.get(h, {"name": "ce téléchargement", "progress": 0})
+        name, parent = t["name"], (interaction.message, self.filtre, self.page)
+        if t["progress"] < 1:
+            return await interaction.response.send_message(
+                f"Que faire de **{name[:150]}** ?\n"
+                f"• **Annuler définitivement** : supprime le téléchargement et retire le titre de Radarr/Sonarr (tu pourras le redemander).\n"
+                f"• **Chercher une autre version** : écarte ce torrent et en prend un autre.",
+                view=ConfirmCancelView(h, name, parent), ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        arr, _ = await find_in_queue(h)  # ignore Radarr/Sonarr injoignables : pas d'avertissement
+        warn = (f"\n⚠️ {arr.name} ne l'a pas encore rangé dans la médiathèque : "
+                f"si tu le retires maintenant, il ne sera pas rangé.") if arr else ""
+        await interaction.followup.send(
+            f"Retirer **{name[:150]}** de qBittorrent ?{warn}\n"
+            f"• **Garder les fichiers** : le torrent n'est plus partagé, rien n'est effacé.\n"
+            f"• **Supprimer les fichiers** : efface aussi ce qui est dans le dossier Téléchargements "
+            f"(la copie rangée dans Films/Séries/Anims n'est pas touchée).",
+            view=ConfirmRemoveView([h], f"**{name[:80]}**", parent), ephemeral=True)
 
-    @discord.ui.button(label="Actualiser", emoji="🔄", style=discord.ButtonStyle.secondary, row=1)
-    async def refresh(self, interaction: discord.Interaction, _):
-        await interaction.response.defer()  # répondre à Discord avant le délai de 3 s
+    async def on_clean(self, interaction: discord.Interaction):
+        if not allowed(interaction):
+            return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            embed, active = await qb_embed()
-            await interaction.edit_original_response(embed=embed, view=QbView(active))
+            done = qb_filter(await qb_torrents(), "termines")
+            # On ne touche pas à ce que Radarr/Sonarr n'a pas encore rangé
+            queued = await queued_hashes()
         except Exception as ex:
-            await interaction.followup.send(f"❌ {ex}", ephemeral=True)
+            return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
+        pending = [t for t in done if t["hash"].upper() in queued]
+        ready = [t for t in done if t["hash"].upper() not in queued]
+        if not ready:
+            return await interaction.followup.send("Aucun torrent terminé à retirer.", ephemeral=True)
+        skipped = f"\n({len(pending)} pas encore rangé(s) dans la médiathèque, laissé(s) de côté.)" if pending else ""
+        await interaction.followup.send(
+            f"Retirer **{len(ready)} torrent(s) terminé(s)** ({size(sum(t['size'] for t in ready))}) "
+            f"de qBittorrent ?{skipped}\n"
+            f"• **Garder les fichiers** : rien n'est effacé.\n"
+            f"• **Supprimer les fichiers** : vide aussi le dossier Téléchargements pour ces torrents "
+            f"(les copies rangées dans Films/Séries/Anims ne sont pas touchées).",
+            view=ConfirmRemoveView([t["hash"] for t in ready], f"**{len(ready)} torrent(s)**",
+                                   (interaction.message, self.filtre, self.page)),
+            ephemeral=True)
 
 
 # ---------- Menu de choix ----------
@@ -813,14 +961,16 @@ async def serie(interaction: discord.Interaction, titre: str):
     await request(interaction, sonarr, titre)
 
 
-@bot.tree.command(name="qb", description="Voir l'avancement des téléchargements qBittorrent")
-async def qb(interaction: discord.Interaction):
+@bot.tree.command(name="qb", description="Voir les torrents qBittorrent (en cours et terminés) et les retirer")
+@app_commands.describe(afficher="Quels torrents afficher (par défaut : en cours)")
+@app_commands.choices(afficher=[app_commands.Choice(name=label, value=key) for key, label in QB_FILTERS.items()])
+async def qb(interaction: discord.Interaction, afficher: str = "actifs"):
     if not allowed(interaction):
         return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
     await interaction.response.defer()
     try:
-        embed, active = await qb_embed()
-        await interaction.followup.send(embed=embed, view=QbView(active))
+        embed, chunk, page, pages = await qb_embed(afficher)
+        await interaction.followup.send(embed=embed, view=QbView(chunk, afficher, page, pages))
     except Exception as ex:
         await interaction.followup.send(f"❌ {ex}")
 
@@ -969,9 +1119,11 @@ async def help_cmd(interaction: discord.Interaction):
         "`/manga titre:Solo Leveling` — en VF si une source française l'a, sinon en anglais. "
         "Tous les chapitres sont téléchargés dans le dossier des mangas, puis chaque nouveau chapitre dès sa sortie."))
     e.add_field(name="📥 Suivre les téléchargements", inline=False, value=(
-        "`/qb` — avancement, vitesse, temps restant et seeders.\n"
-        "Son menu **Annuler un téléchargement…** permet d'annuler définitivement "
-        "ou de chercher une autre version."))
+        "`/qb` — avancement, vitesse, temps restant et seeders. Les onglets **En cours / Terminés / Tous** "
+        "listent tous les torrents de qBittorrent.\n"
+        "Son menu **Retirer ou annuler un torrent…** : un téléchargement en cours peut être annulé "
+        "ou remplacé par une autre version, un torrent terminé retiré (avec ou sans ses fichiers). "
+        "🧹 retire d'un coup tous les terminés déjà rangés."))
     e.add_field(name="🔔 Être prévenu", inline=False, value=(
         "Celui qui fait la demande reçoit un message privé quand c'est prêt.\n"
         "`/suivre titre:…` ou le bouton **Me notifier** — être prévenu aussi (re-cliquer pour arrêter).\n"

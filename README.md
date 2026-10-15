@@ -16,7 +16,7 @@ Une seule installation Docker : seuls 3 secrets et 3 dossiers sont à renseigner
 | `/film titre:Dune` | Choisis le film dans la liste : il est cherché, téléchargé puis rangé dans `Films`. |
 | `/serie titre:The Bear` | Pareil pour une série ; les nouveaux épisodes arrivent tout seuls à leur sortie. |
 | `/manga titre:Solo Leveling` | Manga, manhwa ou webtoon : VF si une source française l'a, sinon en anglais. Chaque nouveau chapitre est récupéré automatiquement. |
-| `/qb` | Téléchargements en cours (progression, vitesse, temps restant, seeders) et menu pour annuler. |
+| `/qb` | Torrents de qBittorrent avec onglets **En cours / Terminés / Tous** (progression, vitesse, temps restant, seeders, ratio). Menu pour annuler un téléchargement ou retirer un torrent terminé (avec ou sans ses fichiers), et bouton pour retirer d'un coup tous les terminés déjà rangés. |
 | `/suivre titre:…` · `/suivis` | Être prévenu en message privé quand un film, un épisode ou un chapitre est prêt. |
 | `/notifications` | Annoncer tout ce qui arrive dans le salon courant (réservé aux gérants du serveur). |
 | `/etat` | Vérifie que chaque maillon fonctionne et explique ce qui bloque. |
