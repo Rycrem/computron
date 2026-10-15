@@ -1,0 +1,19 @@
+# Secrets : ne jamais publier
+.env
+*.env
+!.env.example
+
+# Données générées par les applis si le dépôt est cloné dans CONFIG_DIR
+arr-bot-data/
+qbittorrent/
+jackett/
+radarr/
+sonarr/
+suwayomi/
+MOT_DE_PASSE_QBITTORRENT.txt
+
+# Python / divers
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

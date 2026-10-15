@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Fond : pastille mer -->
+  <circle cx="256" cy="256" r="248" fill="#1E8C9E"/>
+  <circle cx="256" cy="256" r="220" fill="#23A0B3"/>
+
+  <!-- Oreilles + boucle d'oreille -->
+  <circle cx="110" cy="300" r="30" fill="#E6A273"/>
+  <circle cx="402" cy="300" r="30" fill="#E6A273"/>
+  <circle cx="404" cy="342" r="17" fill="none" stroke="#F6C33B" stroke-width="9"/>
+
+  <!-- Visage -->
+  <ellipse cx="256" cy="298" rx="150" ry="138" fill="#F4BD8F"/>
+
+  <!-- Sangle (sous le bandana) -->
+  <path d="M172 272 L262 232" stroke="#1E1E2E" stroke-width="11" stroke-linecap="round"/>
+
+  <!-- Bandana -->
+  <path d="M100 268 C 108 150, 186 104, 256 104 C 330 104, 404 150, 412 268 C 330 236, 182 236, 100 268 Z" fill="#E63946"/>
+  <circle cx="200" cy="160" r="11" fill="#FFF3E6"/>
+  <circle cx="262" cy="140" r="11" fill="#FFF3E6"/>
+  <circle cx="322" cy="162" r="11" fill="#FFF3E6"/>
+  <circle cx="160" cy="215" r="11" fill="#FFF3E6"/>
+  <circle cx="232" cy="200" r="11" fill="#FFF3E6"/>
+  <circle cx="296" cy="205" r="11" fill="#FFF3E6"/>
+  <circle cx="362" cy="220" r="11" fill="#FFF3E6"/>
+  <!-- Nœud et pans -->
+  <path d="M96 238 L34 196 L52 256 Z" fill="#C92F3C"/>
+  <path d="M96 252 L40 300 L86 290 Z" fill="#C92F3C"/>
+  <circle cx="98" cy="246" r="22" fill="#D7333F"/>
+
+  <!-- Sangle du cache-œil -->
+  <path d="M166 312 L112 322" stroke="#1E1E2E" stroke-width="11" stroke-linecap="round"/>
+  <!-- Cache-œil -->
+  <ellipse cx="200" cy="296" rx="40" ry="36" fill="#1E1E2E"/>
+  <ellipse cx="188" cy="284" rx="10" ry="7" fill="#3A3A52"/>
+
+  <!-- Œil + sourcil levé -->
+  <ellipse cx="314" cy="296" rx="30" ry="34" fill="#FFFFFF"/>
+  <circle cx="320" cy="302" r="16" fill="#1E1E2E"/>
+  <circle cx="326" cy="294" r="6" fill="#FFFFFF"/>
+  <path d="M284 248 Q312 230 344 250" stroke="#5A3522" stroke-width="10" fill="none" stroke-linecap="round"/>
+
+  <!-- Joues -->
+  <circle cx="170" cy="356" r="20" fill="#F2968C"/>
+  <circle cx="346" cy="352" r="20" fill="#F2968C"/>
+
+  <!-- Nez -->
+  <ellipse cx="256" cy="334" rx="21" ry="17" fill="#E59A6A"/>
+
+  <!-- Bouche : grand sourire avec dent en or -->
+  <path d="M192 374 Q256 450 322 374 Z" fill="#7C1F2C"/>
+  <ellipse cx="258" cy="412" rx="26" ry="13" fill="#EF6479"/>
+  <path d="M200 376 L314 376 L310 390 Q256 400 204 390 Z" fill="#FFFFFF"/>
+  <rect x="266" y="376" width="18" height="17" rx="3" fill="#F6C33B"/>
+
+  <!-- Moustache en crocs -->
+  <path d="M256 362 C 232 344, 198 346, 180 372 C 170 386, 184 392, 190 382 C 204 364, 230 366, 256 376 Z" fill="#4A2A1A"/>
+  <path d="M256 362 C 280 344, 314 346, 332 372 C 342 386, 328 392, 322 382 C 308 364, 282 366, 256 376 Z" fill="#4A2A1A"/>
+</svg>

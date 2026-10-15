@@ -1,0 +1,140 @@
+# ==================================================================
+#  Médiathèque automatique pilotée par Discord
+#  Radarr + Sonarr + Jackett + FlareSolverr + qBittorrent + Suwayomi + bot Discord
+#
+#  Aucune valeur personnelle ici : tout se règle dans le fichier .env
+#  (copie .env.example en .env, à côté de ce fichier, puis remplis-le).
+#  Tout le reste se configure tout seul au premier démarrage.
+# ==================================================================
+
+x-ids: &ids
+  PUID: "${PUID:-1000}"
+  PGID: "${PGID:-10}"
+  TZ: "${TZ:-Europe/Paris}"
+
+services:
+  # ---- Bot Discord ------------------------------------------------
+  arr-bot:
+    image: python:3.12-slim
+    container_name: arr-bot
+    working_dir: /app
+    command: sh -c "pip install --no-cache-dir -q discord.py aiohttp tzdata && python -u bot.py"
+    env_file:
+      - .env                  # DISCORD_TOKEN, IPT_COOKIE, IPT_USERAGENT… (jamais publiés)
+    environment:
+      TZ: "${TZ:-Europe/Paris}"
+    volumes:
+      - "./app:/app:ro"
+      - "${CONFIG_DIR:?CONFIG_DIR manquant dans .env}:/cfg:ro"
+      - "${MEDIA_DIR:?MEDIA_DIR manquant dans .env}:/data:ro"
+      - "${CONFIG_DIR}/arr-bot-data:/state"
+    depends_on:
+      - radarr
+      - sonarr
+      - jackett
+      - qbittorrent
+    restart: unless-stopped
+
+  # ---- Préparation (tourne une fois puis s'arrête, c'est normal) ---
+  init:
+    image: python:3.12-slim
+    container_name: media-init
+    command: python -u /app/init_qbit.py
+    environment:
+      <<: *ids
+    volumes:
+      - "./app:/app:ro"
+      - "${CONFIG_DIR}:/cfg"
+      - "${MEDIA_DIR}:/data"
+      - "${MANGA_DIR:?MANGA_DIR manquant dans .env}:/comics"
+    restart: "no"
+
+  # ---- Mangas / manhwas (chapitre par chapitre) --------------------
+  suwayomi:
+    image: ghcr.io/suwayomi/suwayomi-server:stable
+    container_name: suwayomi
+    user: "${PUID:-1000}:${PGID:-10}"
+    environment:
+      TZ: "${TZ:-Europe/Paris}"
+      DOWNLOAD_AS_CBZ: "true"
+      UPDATE_INTERVAL: "6"   # recherche de nouveaux chapitres toutes les 6 h
+      FLARESOLVERR_ENABLED: "true"
+      FLARESOLVERR_URL: "http://flaresolverr:8191"
+      EXTENSION_STORES: '["https://github.com/keiyoushi/extensions/raw/repo/index.pb"]'
+    volumes:
+      - "${MANGA_DIR}:/home/suwayomi/.local/share/Tachidesk/downloads/mangas"
+      - "${CONFIG_DIR}/suwayomi:/home/suwayomi/.local/share/Tachidesk"
+    ports:
+      - "4567:4567"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      <<: *ids
+      WEBUI_PORT: "8080"
+    volumes:
+      - "${CONFIG_DIR}/qbittorrent:/config"
+      - "${MEDIA_DIR}:/data"
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    environment:
+      <<: *ids
+    volumes:
+      - "${CONFIG_DIR}/jackett:/config"
+    ports:
+      - "9117:9117"
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      TZ: "${TZ:-Europe/Paris}"
+    ports:
+      - "8191:8191"
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      <<: *ids
+    volumes:
+      - "${CONFIG_DIR}/radarr:/config"
+      - "${MEDIA_DIR}:/data"
+    ports:
+      - "7878:7878"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      <<: *ids
+    volumes:
+      - "${CONFIG_DIR}/sonarr:/config"
+      - "${MEDIA_DIR}:/data"
+    ports:
+      - "8989:8989"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
