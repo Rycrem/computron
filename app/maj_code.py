@@ -9,6 +9,7 @@ Mise à jour automatique du code au démarrage d'un conteneur (arr-bot et init).
 
 Désactivable avec MAJ_AUTO=non dans le .env.
 """
+import fcntl
 import io
 import json
 import os
@@ -27,6 +28,7 @@ DEST = f"{CODE}/app"
 NEW = f"{CODE}/app.new"
 OLD = f"{CODE}/app.old"
 VERSION = f"{CODE}/VERSION"
+LOCK = f"{CODE}/.maj.lock"   # arr-bot et init démarrent en même temps sur le même dossier
 
 
 def log(msg):
@@ -119,6 +121,13 @@ def update():
 
 def main():
     os.makedirs(CODE, exist_ok=True)
+    with open(LOCK, "w") as lock:
+        # un seul conteneur à la fois : le second attend puis voit « déjà à jour »
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        run()
+
+
+def run():
     if AUTO:
         try:
             update()
