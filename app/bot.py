@@ -205,13 +205,13 @@ async def qb_delete(hashes, delete_files: bool):
             raise RuntimeError(f"qBittorrent a répondu {r.status}")
 
 
-async def refresh_qb_message(message, filtre, page):
-    """Remet à jour le tableau /qb après une suppression (sans bloquer si le message a disparu)."""
-    if not message:
+async def refresh_qb_message(origin, filtre, page):
+    """Remet à jour le tableau /qb (message caché) après une suppression, via l'interaction qui l'a affiché."""
+    if not origin:
         return
     try:
         embed, chunk, page, pages = await qb_embed(filtre, page)
-        await message.edit(embed=embed, view=QbView(chunk, filtre, page, pages))
+        await origin.edit_original_response(embed=embed, view=QbView(chunk, filtre, page, pages, origin))
     except Exception as ex:
         print(f"[discord] actualisation de /qb impossible : {ex}", flush=True)
 
@@ -228,6 +228,19 @@ class BaseView(discord.ui.View):
             print("[discord] clic expiré (le bot a répondu après 3 s) — ignoré", flush=True)
             return
         await super().on_error(interaction, error, item)
+
+
+async def announce(interaction, view, content=None, embed=None):
+    """Seul message public du bot : l'annonce avec le bouton « Me notifier » pour que les autres s'abonnent.
+    Le message caché du demandeur est simplement refermé."""
+    await interaction.edit_original_response(content="✅ C'est noté, je l'annonce dans le salon.", embed=None, view=None)
+    kw = {"view": view} if view else {}
+    try:  # message normal dans le salon (pas de « réponse à un message caché »)
+        await interaction.channel.send(content=content, embed=embed,
+                                       allowed_mentions=discord.AllowedMentions.none(), **kw)
+    except (discord.Forbidden, AttributeError):  # pas le droit d'écrire ici : réponse publique à l'interaction
+        await interaction.followup.send(content=content, embed=embed,
+                                        allowed_mentions=discord.AllowedMentions.none(), **kw)
 
 
 # ---------- Annulation ----------
@@ -379,9 +392,9 @@ class ConfirmRemoveView(BaseView):
 
 
 class QbView(BaseView):
-    def __init__(self, chunk, filtre="actifs", page=0, pages=1):
-        super().__init__(timeout=900)
-        self.filtre, self.page, self.pages = filtre, page, pages
+    def __init__(self, chunk, filtre="actifs", page=0, pages=1, origin=None):
+        super().__init__(timeout=840)  # un message caché ne peut plus être modifié après 15 min
+        self.filtre, self.page, self.pages, self.origin = filtre, page, pages, origin
         self.torrents = {t["hash"]: t for t in chunk}
 
         for key, label in QB_FILTERS.items():
@@ -422,7 +435,7 @@ class QbView(BaseView):
             await interaction.response.defer()  # répondre à Discord avant le délai de 3 s
             try:
                 embed, chunk, p, pages = await qb_embed(filtre, page)
-                await interaction.edit_original_response(embed=embed, view=QbView(chunk, filtre, p, pages))
+                await interaction.edit_original_response(embed=embed, view=QbView(chunk, filtre, p, pages, interaction))
             except Exception as ex:
                 await interaction.followup.send(f"❌ {ex}", ephemeral=True)
         return callback
@@ -432,7 +445,7 @@ class QbView(BaseView):
             return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
         h = interaction.data["values"][0]
         t = self.torrents.get(h, {"name": "ce téléchargement", "progress": 0})
-        name, parent = t["name"], (interaction.message, self.filtre, self.page)
+        name, parent = t["name"], (self.origin, self.filtre, self.page)
         if t["progress"] < 1:
             return await interaction.response.send_message(
                 f"Que faire de **{name[:150]}** ?\n"
@@ -472,7 +485,7 @@ class QbView(BaseView):
             f"• **Supprimer les fichiers** : vide aussi le dossier Téléchargements pour ces torrents "
             f"(les copies rangées dans Films/Séries/Anims ne sont pas touchées).",
             view=ConfirmRemoveView([t["hash"] for t in ready], f"**{len(ready)} torrent(s)**",
-                                   (interaction.message, self.filtre, self.page)),
+                                   (self.origin, self.filtre, self.page)),
             ephemeral=True)
 
 
@@ -506,16 +519,18 @@ class PickView(BaseView):
                 return await interaction.edit_original_response(content=f"❌ {ex}", embed=None, view=None)
             if relaunched:
                 subscribe(key, title, uid)
-                return await interaction.edit_original_response(
+                return await announce(
+                    interaction, sub_view(self.arr, item["id"]),
                     content=f"🔁 **{title}** était déjà dans {self.arr.name} sans fichier : recherche relancée.\n"
-                            f"🔔 Tu seras prévenu en message privé dès qu'il sera prêt. Avancement : `/qb`.",
-                    embed=None, view=sub_view(self.arr, item["id"]))
+                            f"🔔 {interaction.user.mention} sera prévenu en message privé dès qu'il sera prêt. "
+                            f"Les autres peuvent cliquer sur **Me notifier**.")
             if self.arr is sonarr:
                 subscribe(key, title, uid)
-                return await interaction.edit_original_response(
+                return await announce(
+                    interaction, sub_view(self.arr, item["id"]),
                     content=f"ℹ️ **{title}** est déjà à jour.\n"
-                            f"🔔 Tu seras prévenu en message privé à chaque nouvel épisode.",
-                    embed=None, view=sub_view(self.arr, item["id"]))
+                            f"🔔 {interaction.user.mention} sera prévenu en message privé à chaque nouvel épisode. "
+                            f"Les autres peuvent cliquer sur **Me notifier**.")
             return await interaction.edit_original_response(
                 content=f"ℹ️ **{title}** est déjà téléchargé dans {self.arr.name}.", embed=None, view=None)
         try:
@@ -539,7 +554,7 @@ class PickView(BaseView):
         if created and created.get("id"):
             subscribe(sub_key(self.arr, created["id"]), title, uid)
             view = sub_view(self.arr, created["id"])
-        await interaction.edit_original_response(content=None, embed=e, view=view)
+        await announce(interaction, view, embed=e)
 
 
 # ---------- Abonnements aux notifications (qui est prévenu en message privé) ----------
@@ -939,14 +954,15 @@ def allowed(interaction):
 async def request(interaction, arr: Arr, titre: str):
     if not allowed(interaction):
         return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     try:
         results = (await arr.lookup(titre))[:10]
     except Exception as ex:
-        return await interaction.followup.send(f"❌ {ex}")
+        return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
     if not results:
-        return await interaction.followup.send(f"Aucun résultat pour **{titre}**.")
-    await interaction.followup.send(f"🔎 Résultats pour **{titre}** :", view=PickView(arr, results, interaction.user.id))
+        return await interaction.followup.send(f"Aucun résultat pour **{titre}**.", ephemeral=True)
+    await interaction.followup.send(f"🔎 Résultats pour **{titre}** :",
+                                    view=PickView(arr, results, interaction.user.id), ephemeral=True)
 
 
 @bot.tree.command(name="film", description="Demander un film (Radarr)")
@@ -967,12 +983,13 @@ async def serie(interaction: discord.Interaction, titre: str):
 async def qb(interaction: discord.Interaction, afficher: str = "actifs"):
     if not allowed(interaction):
         return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     try:
         embed, chunk, page, pages = await qb_embed(afficher)
-        await interaction.followup.send(embed=embed, view=QbView(chunk, afficher, page, pages))
+        await interaction.followup.send(embed=embed, view=QbView(chunk, afficher, page, pages, interaction),
+                                        ephemeral=True)
     except Exception as ex:
-        await interaction.followup.send(f"❌ {ex}")
+        await interaction.followup.send(f"❌ {ex}", ephemeral=True)
 
 
 @bot.tree.command(name="notifications", description="Choisir le salon où annoncer les films et épisodes prêts")
@@ -991,7 +1008,7 @@ async def notifications(interaction: discord.Interaction, activer: bool = True):
         save_settings(settings)
     except OSError as ex:
         return await interaction.response.send_message(f"❌ Réglage non enregistré ({ex}).", ephemeral=True)
-    await interaction.response.send_message(msg)
+    await interaction.response.send_message(msg, ephemeral=True)
 
 
 def _norm(t):
@@ -1044,7 +1061,7 @@ class MangaPickView(BaseView):
         if thumb:
             e.set_thumbnail(url=thumb)
         e.set_footer(text=f"Demandé par {interaction.user.display_name}")
-        await interaction.edit_original_response(content=None, embed=e, view=sub_view(MANGA, res["id"]))
+        await announce(interaction, sub_view(MANGA, res["id"]), embed=e)
 
 
 @bot.tree.command(name="manga", description="Télécharger un manga / manhwa (VF en priorité, sinon anglais)")
@@ -1052,16 +1069,17 @@ class MangaPickView(BaseView):
 async def manga_cmd(interaction: discord.Interaction, titre: str):
     if not allowed(interaction):
         return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     try:
         groups = await manga.search(http, titre)
     except Exception as ex:
-        return await interaction.followup.send(f"❌ {ex}")
+        return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
     if not groups:
-        return await interaction.followup.send(f"Aucun manga trouvé pour **{titre}** (ni en VF, ni en anglais).")
+        return await interaction.followup.send(f"Aucun manga trouvé pour **{titre}** (ni en VF, ni en anglais).",
+                                               ephemeral=True)
     await interaction.followup.send(
         f"🔎 Résultats pour **{titre}** — 🇫🇷 = disponible en VF, 🇬🇧 = en anglais seulement :",
-        view=MangaPickView(groups, interaction.user.id))
+        view=MangaPickView(groups, interaction.user.id), ephemeral=True)
 
 
 @bot.tree.command(name="suivre", description="Être prévenu en message privé : film, épisode ou chapitre prêt")
@@ -1138,7 +1156,7 @@ async def help_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="etat", description="Vérifier que toute l'installation fonctionne")
 async def etat(interaction: discord.Interaction):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     lines = []
 
     async def check(label, coro):
@@ -1247,7 +1265,8 @@ async def etat(interaction: discord.Interaction):
     await check("Rangement Sonarr", import_state(sonarr))
     color = 0x27AE60 if all(l.startswith("✅") for l in lines) else 0xE67E22
     await interaction.followup.send(embed=discord.Embed(title="🩺 État de l'installation",
-                                                        description="\n".join(lines), color=color))
+                                                        description="\n".join(lines), color=color),
+                                    ephemeral=True)
 
 
 if __name__ == "__main__":

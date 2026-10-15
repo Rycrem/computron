@@ -28,6 +28,7 @@ Une seule installation Docker : seuls 3 secrets et 3 dossiers sont à renseigner
 - **Animes** reconnus tout seuls et rangés dans `Anims` : VF > VOSTFR > multi-sous-titres > VOSTEN, avec remplacement automatique quand une meilleure version sort. Deux trackers d'anime publics (nekoBT, Nyaa.si) sont ajoutés d'office.
 - **Recherche quotidienne** des films et épisodes manquants.
 - **Notifications** : la personne qui fait une demande reçoit un message privé quand c'est prêt ; les autres cliquent sur **🔔 Me notifier**.
+- **Discrétion** : le bot répond toujours en message visible seulement par toi (recherches, `/qb`, `/etat`, erreurs). Seule exception : l'annonce d'un nouveau téléchargement, publiée dans le salon avec le bouton **🔔 Me notifier** pour que les autres puissent s'abonner.
 
 ## Ce qui est installé
 
