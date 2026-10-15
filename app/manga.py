@@ -208,6 +208,42 @@ async def library_progress(http):
     return out
 
 
+
+async def downloads(http):
+    """File de Suwayomi regroupée par manga, pour /mangas.
+    Renvoie (téléchargeur en marche ?, [{id, title, done, total, current, progress, queued, errors}])."""
+    data = await gql(http, """query {
+        downloadStatus { state queue { state progress chapter { id name }
+            manga { id title downloadCount chapters { totalCount } } } }
+    }""", timeout=30)
+    st = data["downloadStatus"]
+    groups = {}
+    for q in st["queue"]:
+        m = q["manga"]
+        g = groups.setdefault(m["id"], {
+            "id": m["id"], "title": m["title"], "done": m.get("downloadCount") or 0,
+            "total": (m.get("chapters") or {}).get("totalCount") or 0,
+            "current": None, "progress": 0.0, "queued": 0, "errors": []})
+        if q["state"] == "DOWNLOADING":
+            g["current"], g["progress"] = q["chapter"]["name"], q.get("progress") or 0.0
+        elif q["state"] == "QUEUED":
+            g["queued"] += 1
+        elif q["state"] == "ERROR":
+            g["errors"].append(q["chapter"]["id"])
+    # en cours d'abord, puis en file, puis ceux qui n'ont plus que des erreurs
+    out = sorted(groups.values(), key=lambda g: (g["current"] is None, not g["queued"], g["title"].lower()))
+    return st["state"] == "STARTED", out
+
+
+async def retry_errors(http, chapter_ids):
+    """Remet en file les chapitres en erreur et relance le téléchargeur."""
+    if chapter_ids:
+        await gql(http, "mutation($ids: [Int!]!) { dequeueChapterDownloads(input: {ids: $ids}) "
+                        "{ downloadStatus { state } } }", {"ids": chapter_ids}, timeout=60)
+        await gql(http, "mutation($ids: [Int!]!) { enqueueChapterDownloads(input: {ids: $ids}) "
+                        "{ downloadStatus { state } } }", {"ids": chapter_ids}, timeout=60)
+    await gql(http, "mutation { startDownloader(input: {}) { downloadStatus { state } } }")
+
 async def library(http):
     data = await gql(http, "query { mangas(condition: {inLibrary: true}) { nodes { id title } } }")
     return data["mangas"]["nodes"]
