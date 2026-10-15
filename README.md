@@ -107,9 +107,16 @@ Tous les fichiers sont nommés et accompagnés de métadonnées, ce qui les rend
 
 ## Mettre à jour
 
+**Le code du bot se met à jour tout seul.** À chaque démarrage, les conteneurs `arr-bot` et `init` récupèrent la dernière version de la branche `main` sur GitHub (dans `CONFIG_DIR/arr-bot-code`) avant de se lancer. Pour mettre à jour : redémarre le conteneur `arr-bot` (ou le projet entier). Le journal affiche une ligne `[maj]` : `code mis à jour vers …` ou `déjà à jour`.
+
+- Sans Internet, ou si la nouvelle version est incomplète ou ne se compile pas, la version déjà installée est gardée : le bot démarre quand même.
+- `MAJ_AUTO=non` dans `.env` désactive la mise à jour ; `CODE_BRANCH` permet de suivre une autre branche.
+- Ce qui ne se met **pas** à jour tout seul : `docker-compose.yml` et les images (Radarr, Sonarr…). Pour eux :
+
 ```bash
 cd /volume1/docker/mediatheque
 git pull
+docker compose pull
 docker compose up -d
 ```
 
@@ -130,6 +137,7 @@ Sur UGOS sans SSH : remplace les fichiers du dossier par ceux du nouveau ZIP (en
 | Le bot reste hors ligne | Journal du conteneur `arr-bot` : vérifie `DISCORD_TOKEN`. |
 | `/etat` : IPTorrents refusé | Cookie expiré (déconnexion, changement de mot de passe) : recopie-le dans `.env` et redéploie. Connecte-toi au site au moins tous les 89 jours. |
 | `/etat` : rangement bloqué | Droits d'écriture sur `MEDIA_DIR` pour le compte `PUID`. |
+| Journal `[maj] mise à jour impossible` | GitHub injoignable depuis le NAS : le bot tourne sur la version déjà installée, rien à faire. |
 | `/etat` : chapitres de mangas en erreur | Droits d'écriture sur `MANGA_DIR`, ou source en panne (les sites de scans changent souvent d'adresse). |
 | Port déjà utilisé | Change le numéro de gauche du port concerné dans `docker-compose.yml`. |
 

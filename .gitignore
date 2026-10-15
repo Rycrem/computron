@@ -17,3 +17,6 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+
+# Code téléchargé par la mise à jour automatique
+arr-bot-code/
