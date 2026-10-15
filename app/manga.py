@@ -197,9 +197,9 @@ async def library_progress(http):
     """[(id, titre, chapitres téléchargés, langue, source, encore en cours ?)]"""
     data = await gql(http, """query {
         mangas(condition: {inLibrary: true}) { nodes { id title downloadCount source { lang displayName } } }
-        downloadStatus { queue { mangaId state } }
+        downloadStatus { queue { state manga { id } } }
     }""", timeout=60)
-    busy = {q["mangaId"] for q in data["downloadStatus"]["queue"] if q["state"] in ("QUEUED", "DOWNLOADING")}
+    busy = {q["manga"]["id"] for q in data["downloadStatus"]["queue"] if q["state"] in ("QUEUED", "DOWNLOADING")}
     out = []
     for m in data["mangas"]["nodes"]:
         src = m.get("source") or {}
