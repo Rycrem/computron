@@ -229,6 +229,10 @@ async def setup_arr(name, url, key, root_list, category_field, category, jkey, j
                               if x["implementation"] == "Torznab")
             conf = json.loads(json.dumps(schema))
             values = {"baseUrl": feed, "apiPath": "/api", "apiKey": jkey}
+            if idx in ANIME_INDEXERS and any(f["name"] == "animeCategories" for f in conf["fields"]):
+                # Sonarr : trackers d'anime interrogés seulement pour les animes (sinon son test échoue :
+                # aucun résultat dans les catégories séries classiques)
+                values.update({"categories": [], "animeCategories": [5070]})
             for f in conf["fields"]:
                 if f["name"] in values:
                     f["value"] = values[f["name"]]
