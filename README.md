@@ -141,6 +141,7 @@ Sur UGOS sans SSH : remplace les fichiers du dossier par ceux du nouveau ZIP (en
 | `/etat` : rangement bloqué | Droits d'écriture sur `MEDIA_DIR` pour le compte `PUID`. |
 | Journal `[maj] mise à jour impossible` | GitHub injoignable depuis le NAS : le bot tourne sur la version déjà installée, rien à faire. |
 | `/etat` : chapitres de mangas en erreur | Droits d'écriture sur `MANGA_DIR`, ou source en panne (les sites de scans changent souvent d'adresse). |
+| Sonarr/Radarr trouvent des releases mais n'en prennent aucune | Dans Sonarr ou Radarr, ouvre la série ou le film puis **Recherche interactive** (icône personne) : l'icône rouge de chaque release donne la raison du refus (qualité, langue, série inconnue…). |
 | Port déjà utilisé | Change le numéro de gauche du port concerné dans `docker-compose.yml`. |
 
 ## Avertissement

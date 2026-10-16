@@ -4,8 +4,8 @@ Tout est idempotent : rien n'est ajouté deux fois.
 
   - lit les clés API générées par Radarr, Sonarr et Jackett dans leurs fichiers de config
   - Jackett  : débranche l'ancien FlareSolverr + ajoute les indexeurs listés dans JACKETT_INDEXERS
-  - Radarr   : dossier /data/Films, client qBittorrent, indexeur Jackett
-  - Sonarr   : dossier /data/Séries, client qBittorrent, indexeur Jackett
+  - Radarr   : dossier /data/Films, client qBittorrent, un indexeur par tracker Jackett
+  - Sonarr   : dossier /data/Séries, client qBittorrent, un indexeur par tracker Jackett
 """
 import json
 import os
@@ -189,7 +189,7 @@ async def jackett_status():
 
 
 # ---------------- Radarr / Sonarr ----------------
-async def setup_arr(name, url, key, root_list, category_field, category, jkey, log):
+async def setup_arr(name, url, key, root_list, category_field, category, jkey, jackett_ids, log):
     h = {"X-Api-Key": key}
     async with aiohttp.ClientSession(headers=h, timeout=aiohttp.ClientTimeout(total=60)) as s:
         # Dossiers racines (Films ou Séries, + Anims)
@@ -213,20 +213,48 @@ async def setup_arr(name, url, key, root_list, category_field, category, jkey, l
             await _json(s, "POST", f"{url}/api/v3/downloadclient?forceSave=true", json=schema)
             log(f"{name} : qBittorrent branché")
 
-        # Indexeur Jackett (flux « all » = tous les indexeurs configurés dans Jackett)
+        # Indexeurs Jackett : un flux par tracker. Le flux agrégé « all » mélange les capacités
+        # des trackers : une recherche par identifiant TVDB/IMDb renvoie alors les derniers
+        # torrents de nekoBT / Nyaa (sans rapport avec la série), Sonarr les rejette tous et
+        # ne relance jamais la recherche par titre sur IPTorrents.
         indexers = await _json(s, "GET", f"{url}/api/v3/indexer")
-        if not any("jackett:9117" in str(i.get("fields")) for i in indexers):
-            schema = next(x for x in await _json(s, "GET", f"{url}/api/v3/indexer/schema")
-                          if x["implementation"] == "Torznab")
-            values = {"baseUrl": f"{JACKETT}/api/v2.0/indexers/all/results/torznab",
-                      "apiPath": "/api", "apiKey": jkey}
-            for f in schema["fields"]:
+        have = {jackett_url(i) for i in indexers}
+        schema, missing = None, []
+        for idx in jackett_ids:
+            feed = f"{JACKETT}/api/v2.0/indexers/{idx}/results/torznab"
+            if feed in have:
+                continue
+            if schema is None:
+                schema = next(x for x in await _json(s, "GET", f"{url}/api/v3/indexer/schema")
+                              if x["implementation"] == "Torznab")
+            conf = json.loads(json.dumps(schema))
+            values = {"baseUrl": feed, "apiPath": "/api", "apiKey": jkey}
+            for f in conf["fields"]:
                 if f["name"] in values:
                     f["value"] = values[f["name"]]
-            schema.update({"name": "Jackett (tous les indexeurs)", "enableRss": True,
-                           "enableAutomaticSearch": True, "enableInteractiveSearch": True, "priority": 25})
-            await _json(s, "POST", f"{url}/api/v3/indexer?forceSave=true", json=schema)
-            log(f"{name} : Jackett branché")
+            conf.update({"name": f"Jackett - {idx}", "enableRss": True, "enableAutomaticSearch": True,
+                         "enableInteractiveSearch": True, "priority": 25})
+            try:  # Sonarr/Radarr testent le tracker avant d'enregistrer : un tracker en panne ne bloque pas les autres
+                await _json(s, "POST", f"{url}/api/v3/indexer?forceSave=true", json=conf)
+                have.add(feed)
+                log(f"{name} : tracker « {idx} » branché (via Jackett)")
+            except Exception as ex:
+                missing.append(idx)
+                log(f"{name} : tracker « {idx} » pas encore branché ({why(ex)})")
+        if any(h and "/indexers/all/" not in h for h in have):  # remplacé par les flux par tracker
+            for i in indexers:
+                if "/indexers/all/" in jackett_url(i):
+                    await _json(s, "DELETE", f"{url}/api/v3/indexer/{i['id']}")
+                    log(f"{name} : ancien flux Jackett « tous les indexeurs » retiré")
+        return missing
+
+
+def jackett_url(indexer):
+    """URL du flux Torznab d'un indexeur Radarr/Sonarr ('' si ce n'est pas un flux Jackett)."""
+    for f in indexer.get("fields") or []:
+        if f.get("name") == "baseUrl" and "jackett:9117" in str(f.get("value")):
+            return str(f["value"]).rstrip("/")
+    return ""
 
 
 # ---------------- Notifications vers le bot ----------------
@@ -403,11 +431,16 @@ async def run(log=print):
     except Exception as ex:  # non bloquant : Radarr/Sonarr peuvent être configurés quand même
         log(f"Jackett : réglages ignorés pour l'instant ({why(ex)})")
     try:
+        jackett_ids = await jackett_status()
+    except Exception as ex:
+        jackett_ids = []
+        log(f"Jackett : liste des trackers indisponible ({why(ex)})")
+    try:
         anims = media_dir(ANIME_DIR_ALIASES, "Anims")
-        await setup_arr("Radarr", RADARR, rk, [media_dir({"films"}, "Films"), anims],
-                        "movieCategory", "radarr", jk, log)
-        await setup_arr("Sonarr", SONARR, sk, [media_dir({"series"}, "Séries"), anims],
-                        "tvCategory", "tv-sonarr", jk, log)
+        missing = await setup_arr("Radarr", RADARR, rk, [media_dir({"films"}, "Films"), anims],
+                                  "movieCategory", "radarr", jk, jackett_ids, log)
+        missing += await setup_arr("Sonarr", SONARR, sk, [media_dir({"series"}, "Séries"), anims],
+                                   "tvCategory", "tv-sonarr", jk, jackett_ids, log)
     except Exception as ex:
         log(f"Configuration pas encore possible : {why(ex)}")
         return False
@@ -420,5 +453,8 @@ async def run(log=print):
             await setup_webhook(name, url, key, log)
         except Exception as ex:  # non bloquant
             log(f"{name} : notifications non activées ({why(ex)})")
+    if not jackett_ids or missing:
+        log("Trackers Jackett pas encore tous branchés à Radarr et Sonarr, nouvel essai bientôt…")
+        return False
     log("Configuration automatique terminée ✔")
     return True
