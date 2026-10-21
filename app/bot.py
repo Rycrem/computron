@@ -425,9 +425,13 @@ class QbView(BaseView):
             self.add_item(b)
         if filtre != "actifs":
             clean = discord.ui.Button(label="Retirer tous les terminés", emoji="🧹", row=1,
-                                      style=discord.ButtonStyle.danger)
+                                      style=discord.ButtonStyle.secondary)
             clean.callback = self.on_clean
             self.add_item(clean)
+        wipe = discord.ui.Button(label=f"Tout supprimer ({QB_FILTERS[filtre].split(' ', 1)[1].lower()})",
+                                 emoji="🗑️", row=1, style=discord.ButtonStyle.danger)
+        wipe.callback = self.on_wipe
+        self.add_item(wipe)
 
         if chunk:
             select = discord.ui.Select(
@@ -500,6 +504,78 @@ class QbView(BaseView):
                                    (self.origin, self.filtre, self.page)),
             ephemeral=True)
 
+
+    async def on_wipe(self, interaction: discord.Interaction):
+        """Tous les torrents de l'onglet affiché (en cours / terminés / tous), fichiers compris."""
+        if not allowed(interaction):
+            return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            shown = qb_filter(await qb_torrents(), self.filtre)
+        except Exception as ex:
+            return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
+        if not shown:
+            return await interaction.followup.send("Aucun torrent à supprimer dans cet onglet.", ephemeral=True)
+        try:
+            queued = await queued_hashes()
+        except Exception:
+            queued = set()  # Radarr/Sonarr injoignables : on supprime quand même, sans avertissement
+        active = [t for t in shown if t["progress"] < 1]
+        done = [t for t in shown if t["progress"] >= 1]
+        unranged = [t for t in done if t["hash"].upper() in queued]
+        lines = [f"Supprimer **{len(shown)} torrent(s)** ({size(sum(t['size'] for t in shown))}) "
+                 f"de qBittorrent **et leurs fichiers du disque** ?"]
+        if active:
+            lines.append(f"• **{len(active)} en cours** : téléchargement arrêté et fichiers partiels effacés. "
+                         f"Radarr/Sonarr ne le relancent pas tout de suite, mais les titres manquants "
+                         f"sont recherchés à nouveau chaque nuit à {SEARCH_HOUR} h.")
+        if done:
+            lines.append(f"• **{len(done)} terminé(s)** : fichiers du dossier Téléchargements effacés, "
+                         f"les copies rangées dans Films/Séries/Anims sont conservées.")
+        if unranged:
+            lines.append(f"⚠️ **{len(unranged)} terminé(s) pas encore rangé(s)** dans la médiathèque : "
+                         f"ils seront perdus.")
+        await interaction.followup.send("\n".join(lines), ephemeral=True,
+                                        view=ConfirmWipeView([t["hash"] for t in shown], len(shown),
+                                                             (self.origin, self.filtre, self.page)))
+
+
+async def wipe_torrents(hashes):
+    """Supprime les torrents et leurs fichiers. Ceux suivis par Radarr/Sonarr passent par leur file
+    pour qu'ils ne relancent pas aussitôt un autre téléchargement."""
+    wanted = {h.upper() for h in hashes}
+    for arr in (radarr, sonarr):
+        try:
+            q = await arr._req("GET", "queue", params={"pageSize": 1000})
+            ids = [r["id"] for r in q.get("records", []) if (r.get("downloadId") or "").upper() in wanted]
+            if ids:
+                await arr._req("DELETE", "queue/bulk", json={"ids": ids},
+                               params={"removeFromClient": "true", "blocklist": "false", "skipRedownload": "true"})
+        except Exception as ex:  # qBittorrent fera quand même la suppression ci-dessous
+            print(f"[discord] {arr.name} : file non nettoyée avant suppression ({ex})", flush=True)
+    await qb_delete(list(hashes), True)
+
+
+class ConfirmWipeView(BaseView):
+    def __init__(self, hashes, count, parent=None):
+        super().__init__(timeout=120)
+        self.hashes, self.count, self.parent = hashes, count, parent
+
+    @discord.ui.button(label="Tout supprimer, fichiers compris", emoji="🗑️", style=discord.ButtonStyle.danger)
+    async def wipe(self, interaction, _):
+        await interaction.response.edit_message(content=f"⏳ Suppression de {self.count} torrent(s)…", view=None)
+        try:
+            await wipe_torrents(self.hashes)
+            await interaction.edit_original_response(
+                content=f"✅ {self.count} torrent(s) supprimé(s) de qBittorrent, fichiers effacés du disque.")
+        except Exception as ex:
+            await interaction.edit_original_response(content=f"❌ {ex}")
+        if self.parent:
+            await refresh_qb_message(*self.parent)
+
+    @discord.ui.button(label="Retour", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction, _):
+        await interaction.response.edit_message(content="Rien n'a été modifié.", view=None)
 
 
 # ---------- Mangas (file de Suwayomi) ----------
@@ -1290,7 +1366,8 @@ async def help_cmd(interaction: discord.Interaction):
         "listent tous les torrents de qBittorrent.\n"
         "Son menu **Retirer ou annuler un torrent…** : un téléchargement en cours peut être annulé "
         "ou remplacé par une autre version, un torrent terminé retiré (avec ou sans ses fichiers). "
-        "🧹 retire d'un coup tous les terminés déjà rangés.\n"
+        "🧹 retire d'un coup tous les terminés déjà rangés. 🗑️ **Tout supprimer** efface tous les torrents "
+        "de l'onglet affiché (en cours, terminés ou tous) et leurs fichiers du disque, après confirmation.\n"
         "`/mangas` (ou l'onglet **📚 Mangas** de `/qb`) — chapitres téléchargés / total pour chaque manga, "
         "chapitre en cours, file d'attente, et 🔁 pour réessayer les chapitres en erreur."))
     e.add_field(name="🔔 Être prévenu", inline=False, value=(
