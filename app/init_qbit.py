@@ -29,6 +29,9 @@ def norm(s):
     return "".join(c for c in s if not unicodedata.combining(c))
 
 
+CREATED = []
+
+
 def ensure_dir(wanted, aliases):
     """Réutilise un dossier existant (Séries / Series / séries…) ou le crée."""
     for name in os.listdir(DATA):
@@ -39,6 +42,7 @@ def ensure_dir(wanted, aliases):
     os.makedirs(path, exist_ok=True)
     os.chown(path, PUID, PGID)
     print(f"  dossier créé : {wanted}")
+    CREATED.append(wanted)
     return wanted
 
 
@@ -63,6 +67,12 @@ def main():
     ensure_dir("Séries", {"series"})
     ensure_dir("Anims", {"anims", "anime", "animes"})
     dl = ensure_dir("Téléchargements", {"telechargements", "downloads"})
+    media = os.getenv("MEDIA_DIR", "?")
+    print(f"  dossier des médias sur le NAS : {media}")
+    if len(CREATED) == 4:
+        # Docker crée en silence un dossier vide quand MEDIA_DIR ne pointe pas sur un dossier existant
+        print(f"  ⚠️ aucun dossier Films / Séries / Anims / Téléchargements trouvé dans {media} : "
+              f"si tes médias sont ailleurs, corrige MEDIA_DIR dans .env puis redéploie le projet")
 
     # Mangas : dossier MANGA_DIR (créé si besoin) + dossier de Suwayomi accessible en écriture
     if os.path.isdir("/comics"):

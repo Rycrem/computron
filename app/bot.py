@@ -168,12 +168,16 @@ def qb_filter(torrents, filtre):
     return torrents
 
 
-def qb_field(t):
+def qb_field(t, waiting=frozenset()):
     state = STATES.get(t["state"], t["state"])
     if t["progress"] >= 1:
         up = f" · ↑ {size(t['upspeed'])}/s" if t.get("upspeed") else ""
+        # Le torrent reste dans Téléchargements (partage) ; la copie à regarder est rangée par Radarr/Sonarr
+        where = ("⚠️ pas encore rangé (voir /etat)" if t.get("hash", "").upper() in waiting
+                 else "rangé dans Films / Séries / Anims")
         return (f"{state} · {size(t['size'])} · ratio {t.get('ratio', 0):.2f}{up}"
-                + (f" · fini <t:{t['completion_on']}:R>" if t.get("completion_on", 0) > 0 else ""))
+                + (f" · fini <t:{t['completion_on']}:R>" if t.get("completion_on", 0) > 0 else "")
+                + f"\n📁 `{ac.nas_path(t.get('content_path') or t.get('save_path'))[:200]}` · {where}")
     speed = f"{size(t['dlspeed'])}/s" if t["dlspeed"] else "—"
     return (f"`{bar(t['progress'])}` **{t['progress'] * 100:.1f}%**\n"
             f"{state} · {speed} · ETA {eta(t['eta'])} · {size(t['size'])} · {seeds(t)}")
@@ -191,8 +195,14 @@ async def qb_embed(filtre="actifs", page=0):
     if not shown:
         e.description = {"actifs": "Aucun téléchargement en cours. 🎉",
                          "termines": "Aucun torrent terminé dans qBittorrent."}.get(filtre, "qBittorrent est vide.")
+    waiting = set()
+    if any(t["progress"] >= 1 for t in chunk):
+        try:
+            waiting = await queued_hashes()
+        except Exception:
+            pass  # Radarr/Sonarr injoignables : on affiche quand même la liste
     for t in chunk:
-        e.add_field(name=t["name"][:250], value=qb_field(t), inline=False)
+        e.add_field(name=t["name"][:250], value=qb_field(t, waiting), inline=False)
     e.set_footer(text=f"Page {page + 1}/{pages} · {active} en cours · {len(torrents) - active} terminés · "
                       f"↓ {size(sum(t['dlspeed'] for t in torrents))}/s · "
                       f"↑ {size(sum(t.get('upspeed', 0) for t in torrents))}/s · 🌱 seeders connectés/disponibles")
@@ -852,6 +862,9 @@ def build_ready_embed(app, payload):
         m = sr
     else:
         return None
+    folder = m.get("folderPath") or m.get("path")
+    if folder:
+        e.add_field(name="📁 Sur le NAS", value=f"`{ac.nas_path(folder)[:200]}`", inline=False)
     poster = poster_of(m)
     if poster:
         e.set_thumbnail(url=poster)
@@ -1316,7 +1329,7 @@ async def etat(interaction: discord.Interaction):
         if not has_anime or ac.ANIME_PROFILE not in profiles:
             raise RuntimeError("animes pas encore prêts (dossier Anims ou profil Anime manquant), "
                                "réessaie dans une minute")
-        return "— " + " · ".join(r["path"] for r in roots)
+        return "— " + " · ".join(ac.nas_path(r["path"]) for r in roots)
 
     async def jackett_state():
         ids = await ac.jackett_status()
@@ -1335,6 +1348,15 @@ async def etat(interaction: discord.Interaction):
         t = await qb_torrents()
         return f"— {len(t)} torrent(s)"
 
+    async def media_state():
+        """Dossiers vus par Radarr/Sonarr, traduits en chemins du NAS (à vérifier dans le .env)."""
+        if not ac.MEDIA_DIR:
+            raise RuntimeError("MEDIA_DIR absent du .env du bot : impossible d'afficher les chemins du NAS")
+        names = sorted(n for n in os.listdir(ac.DATA) if os.path.isdir(os.path.join(ac.DATA, n)))
+        return (f"— `{ac.MEDIA_DIR}` ({', '.join(names) or 'vide'}). Si ce n'est pas ton dossier, "
+                f"corrige MEDIA_DIR dans .env puis redéploie le projet")
+
+    await check("Dossier des médias", media_state())
     await check("Radarr", arr_state(radarr))
     await check("Sonarr", arr_state(sonarr))
     await check("Jackett", jackett_state())
@@ -1395,7 +1417,9 @@ async def etat(interaction: discord.Interaction):
         r = stuck[0]
         msgs = [m for sm in r.get("statusMessages", []) for m in (sm.get("messages") or [sm.get("title", "")])]
         why = (msgs[0] if msgs else r.get("errorMessage") or r.get("trackedDownloadState", "?"))[:160]
-        raise RuntimeError(f"{len(stuck)} fini(s) mais pas rangé(s). Ex. « {r.get('title', '?')[:60]} » : {why}")
+        where = ac.nas_path(r.get("outputPath")) if r.get("outputPath") else ""
+        where = f" · fichier dans `{where[:150]}`" if where else ""
+        raise RuntimeError(f"{len(stuck)} fini(s) mais pas rangé(s). Ex. « {r.get('title', '?')[:60]} » : {why}{where}")
 
     await check("Radarr → bot", webhook_state(radarr))
     await check("Sonarr → bot", webhook_state(sonarr))
