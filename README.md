@@ -138,6 +138,7 @@ Sur UGOS sans SSH : remplace les fichiers du dossier par ceux du nouveau ZIP (en
 | `CONFIG_DIR manquant dans .env` au déploiement | Le fichier `.env` n'est pas à côté de `docker-compose.yml`, ou porte un autre nom (`.env.txt`, `_env`…). |
 | Le bot reste hors ligne | Journal du conteneur `arr-bot` : vérifie `DISCORD_TOKEN`. |
 | `/etat` : IPTorrents refusé | Cookie expiré (déconnexion, changement de mot de passe) : recopie-le dans `.env` et redéploie. Connecte-toi au site au moins tous les 89 jours. |
+| Téléchargement fini mais introuvable dans tes dossiers | `/etat` → ligne **Dossier des médias** : c'est le dossier réellement utilisé. S'il ne correspond pas au tien, `MEDIA_DIR` du `.env` est faux (Docker crée alors un dossier vide à cet endroit) : corrige-le (ex. `MEDIA_DIR=/volume1/Films & Series`), redéploie, et récupère les fichiers dans l'ancien dossier. `/qb` → **Terminés** affiche aussi l'emplacement de chaque torrent. |
 | `/etat` : rangement bloqué | Droits d'écriture sur `MEDIA_DIR` pour le compte `PUID`. |
 | Journal `[maj] mise à jour impossible` | GitHub injoignable depuis le NAS : le bot tourne sur la version déjà installée, rien à faire. |
 | `/etat` : chapitres de mangas en erreur | Droits d'écriture sur `MANGA_DIR`, ou source en panne (les sites de scans changent souvent d'adresse). |

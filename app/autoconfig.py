@@ -20,6 +20,15 @@ JACKETT = "http://jackett:9117"
 QBIT = "http://qbittorrent:8080"
 CFG = "/cfg"
 DATA = "/data"
+MEDIA_DIR = (os.getenv("MEDIA_DIR") or "").strip().rstrip("/")  # même dossier, vu depuis le NAS
+
+
+def nas_path(path):
+    """Chemin vu par les conteneurs (/data/…) -> chemin réel sur le NAS (MEDIA_DIR/…)."""
+    path = str(path or "")
+    if MEDIA_DIR and (path == DATA or path.startswith(DATA + "/")):
+        return MEDIA_DIR + path[len(DATA):]
+    return path
 
 
 def norm(s):

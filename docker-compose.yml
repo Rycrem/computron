@@ -44,6 +44,7 @@ services:
     command: sh -c "python -u /livre/maj_code.py && python -u /code/app/init_qbit.py"
     environment:
       <<: *ids
+      MEDIA_DIR: "${MEDIA_DIR}"
       MAJ_AUTO: "${MAJ_AUTO:-oui}"
       CODE_REPO: "${CODE_REPO:-}"
       CODE_BRANCH: "${CODE_BRANCH:-}"
