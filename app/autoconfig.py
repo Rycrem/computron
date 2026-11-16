@@ -6,6 +6,7 @@ Tout est idempotent : rien n'est ajouté deux fois.
   - Jackett  : débranche l'ancien FlareSolverr + ajoute les indexeurs listés dans JACKETT_INDEXERS
   - Radarr   : dossier /data/Films, client qBittorrent, un indexeur par tracker Jackett
   - Sonarr   : dossier /data/Séries, client qBittorrent, un indexeur par tracker Jackett
+  - qBittorrent : limites de connexions pour ne pas saturer le réseau du NAS
 """
 import json
 import os
@@ -433,6 +434,44 @@ async def setup_preferences(name, url, key, log):
                 log(f"{name} : indexeur Jackett réglé (seeders min. {MIN_SEEDERS}, catégories anime)")
 
 
+# ---------------- qBittorrent : limites pour ne pas saturer le NAS ----------------
+# Par défaut qBittorrent ouvre jusqu'à 500 connexions et des milliers de paquets UDP (uTP).
+# Sur le réseau Docker du NAS, chaque connexion occupe une place dans la table de suivi
+# des connexions (conntrack) : quand elle est pleine, plus aucun conteneur ne résout de nom
+# (« Temporary failure in name resolution » : Discord, qbittorrent:8080…) et tout se bloque.
+QBIT_LIMITS = {
+    "max_connec": 200,               # connexions au total (défaut 500)
+    "max_connec_per_torrent": 60,    # par torrent (défaut 100)
+    "max_uploads": 20,               # envois simultanés au total
+    "max_uploads_per_torrent": 5,
+    "max_half_open_connections": 20, # connexions en cours d'ouverture (si la version le gère)
+    "bittorrent_protocol": 1,        # TCP seulement : uTP (UDP) remplit la table bien plus vite
+    "upnp": False,                   # inutile dans Docker
+    "queueing_enabled": True,
+    "max_active_downloads": 3,       # les autres attendent leur tour
+    "max_active_uploads": 3,
+    "max_active_torrents": 6,
+    "dont_count_slow_torrents": True,
+}
+
+
+async def setup_qbittorrent(log):
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30),
+                                     headers={"Referer": QBIT}) as s:
+        async with s.post(f"{QBIT}/api/v2/auth/login",
+                          data={"username": "admin", "password": qbit_password()}) as r:
+            await r.text()  # inutile depuis Docker (réseau autorisé), sans effet sinon
+        current = await _json(s, "GET", f"{QBIT}/api/v2/app/preferences")
+        wanted = {k: v for k, v in QBIT_LIMITS.items() if k in current and current[k] != v}
+        if not wanted:
+            return
+        async with s.post(f"{QBIT}/api/v2/app/setPreferences", data={"json": json.dumps(wanted)}) as r:
+            if r.status >= 400:
+                raise RuntimeError(f"qBittorrent a répondu {r.status}")
+        log(f"qBittorrent : limites appliquées ({QBIT_LIMITS['max_connec']} connexions max, TCP seulement, "
+            f"{QBIT_LIMITS['max_active_downloads']} téléchargements à la fois) pour ne pas saturer le réseau du NAS")
+
+
 async def run(log=print):
     """Renvoie True quand tout est configuré, False s'il faut réessayer plus tard."""
     rk, sk, jk = arr_key("radarr"), arr_key("sonarr"), jackett_key()
@@ -457,6 +496,10 @@ async def run(log=print):
     except Exception as ex:
         log(f"Configuration pas encore possible : {why(ex)}")
         return False
+    try:
+        await setup_qbittorrent(log)
+    except Exception as ex:  # non bloquant
+        log(f"qBittorrent : limites de connexions non appliquées ({why(ex)})")
     for name, url, key in (("Radarr", RADARR, rk), ("Sonarr", SONARR, sk)):
         try:
             await setup_preferences(name, url, key, log)
