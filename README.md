@@ -21,6 +21,7 @@ Une seule installation Docker : seuls 3 secrets et 3 dossiers sont à renseigner
 | `/suivre titre:…` · `/suivis` | Être prévenu en message privé quand un film, un épisode ou un chapitre est prêt. |
 | `/notifications` | Annoncer tout ce qui arrive dans le salon courant (réservé aux gérants du serveur). |
 | `/etat` | Vérifie que chaque maillon fonctionne et explique ce qui bloque. |
+| `/pourquoi` | Pour un film ou une série demandé mais jamais téléchargé : lance une recherche sur les trackers sans rien télécharger et dit combien de torrents ont été trouvés et pourquoi ils ont été refusés (pas assez de seeders, qualité, langue, mauvais titre…). Sans titre, vérifie les premiers films et séries en attente. |
 | `/help` | Toutes les commandes. |
 
 **Automatismes**
@@ -137,6 +138,7 @@ Sur UGOS sans SSH : remplace les fichiers du dossier par ceux du nouveau ZIP (en
 |---|---|
 | `CONFIG_DIR manquant dans .env` au déploiement | Le fichier `.env` n'est pas à côté de `docker-compose.yml`, ou porte un autre nom (`.env.txt`, `_env`…). |
 | Le bot reste hors ligne | Journal du conteneur `arr-bot` : vérifie `DISCORD_TOKEN`. |
+| Journaux : « Reports grabbed: 0 » à chaque synchro RSS | Normal la plupart du temps : la synchro RSS ne regarde que les ~100 derniers torrents mis en ligne sur chaque tracker et ne prend que ceux d'un film ou épisode demandé et encore manquant. Les anciens titres sont cherchés à la demande et chaque nuit. Si un titre demandé ne vient jamais, `/pourquoi titre:…` dit pourquoi. Les avertissements Jackett « categories unsupported » sont sans effet. |
 | `/etat` : IPTorrents refusé | Cookie expiré (déconnexion, changement de mot de passe) : recopie-le dans `.env` et redéploie. Connecte-toi au site au moins tous les 89 jours. |
 | Téléchargement fini mais introuvable dans tes dossiers | `/etat` → ligne **Dossier des médias** : c'est le dossier réellement utilisé. S'il ne correspond pas au tien, `MEDIA_DIR` du `.env` est faux (Docker crée alors un dossier vide à cet endroit) : corrige-le (ex. `MEDIA_DIR=/volume1/Films & Series`), redéploie, et récupère les fichiers dans l'ancien dossier. `/qb` → **Terminés** affiche aussi l'emplacement de chaque torrent. |
 | `/etat` : rangement bloqué | Droits d'écriture sur `MEDIA_DIR` pour le compte `PUID`. |

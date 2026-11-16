@@ -16,6 +16,9 @@ Au démarrage, le bot configure automatiquement toute la stack (voir autoconfig.
 import asyncio
 import json
 import os
+import re
+from collections import Counter
+from datetime import datetime, timezone
 
 import aiohttp
 import discord
@@ -1376,10 +1379,117 @@ async def help_cmd(interaction: discord.Interaction):
         "`/suivis` — la liste de tes abonnements.\n"
         "`/notifications` — annoncer tout ce qui arrive dans ce salon (réservé aux gérants du serveur)."))
     e.add_field(name="🩺 Vérifier", inline=False, value=(
-        "`/etat` — vérifie que tout fonctionne (Radarr, Sonarr, Jackett, IPTorrents, qBittorrent)."))
+        "`/etat` — vérifie que tout fonctionne (Radarr, Sonarr, Jackett, IPTorrents, qBittorrent).\n"
+        "`/pourquoi` (ou `/pourquoi titre:Dune`) — cherche sur les trackers sans télécharger et explique "
+        "pourquoi un film ou une série en attente n'est pas pris (seeders, qualité, langue, mauvais titre…)."))
     e.set_footer(text=f"Versions en VO privilégiées · minimum {ac.MIN_SEEDERS} seeders · "
                       f"films et épisodes manquants recherchés chaque nuit à {SEARCH_HOUR} h")
     await interaction.response.send_message(embed=e, ephemeral=True)
+
+
+# ---------- /pourquoi : raisons des refus de Radarr / Sonarr ----------
+REJECTION_HINTS = [  # (motif dans le message anglais de Radarr/Sonarr, explication en français)
+    (r"seeders", "pas assez de seeders (minimum {min})"),
+    (r"custom format|format score", "refusé par les préférences de langue (VF seule, RAW, doublage anglais seul…)"),
+    (r"quality.*(not wanted|wanted in profile)|not wanted in profile", "qualité non autorisée par le profil (ex. 720p, 4K, CAM)"),
+    (r"unknown (movie|series)|wrong (movie|series)|unable to (parse|identify)|does not match|wasn't requested|not requested|unexpected",
+     "torrent d'un autre titre ou d'un autre épisode"),
+    (r"not an upgrade|existing file|equal or higher|cutoff", "une version aussi bonne est déjà sur le disque"),
+    (r"queue", "déjà en cours de téléchargement"),
+    (r"size|too (large|small)|maximum|minimum.*mb", "taille hors limites"),
+    (r"blocklist|previously failed", "déjà essayé et en échec (liste noire)"),
+    (r"delay|waiting|pending", "en attente (délai avant téléchargement)"),
+    (r"language", "langue non voulue"),
+    (r"not available|availability|not yet released|released", "film pas encore sorti selon Radarr"),
+    (r"season pack|full season|multi-?season", "pack de saison non voulu"),
+    (r"age|retention", "torrent trop ancien"),
+]
+
+
+def explain_rejection(msg):
+    low = msg.lower()
+    for pattern, text in REJECTION_HINTS:
+        if re.search(pattern, low):
+            return text.format(min=ac.MIN_SEEDERS)
+    return msg[:90]
+
+
+async def release_report(arr, label, params):
+    """Lance une recherche (sans rien télécharger) et résume ce que Radarr/Sonarr ont refusé et pourquoi."""
+    try:
+        releases = await arr._req("GET", "release", params=params, timeout=aiohttp.ClientTimeout(total=180))
+    except Exception as ex:
+        return f"❌ **{label}** — recherche impossible ({str(ex)[:120]})"
+    if not releases:
+        return (f"🔍 **{label}** — aucun torrent trouvé sur les trackers : titre absent d'IPTorrents / nekoBT / Nyaa, "
+                f"ou tracker injoignable (voir /etat)")
+    ok = [r for r in releases if not r.get("rejected")]
+    if ok:
+        best = ok[0].get("title", "?")[:70]
+        return (f"✅ **{label}** — {len(ok)}/{len(releases)} torrent(s) accepté(s), ex. « {best} ». "
+                f"S'il ne se télécharge pas, regarde /etat (qBittorrent) ou relance la recherche")
+    reasons = Counter(explain_rejection(m) for r in releases for m in set(r.get("rejections") or ["?"]))
+    top = " · ".join(f"{why} ({n})" for why, n in reasons.most_common(3))
+    return f"⛔ **{label}** — {len(releases)} torrent(s) trouvé(s), tous refusés : {top}"
+
+
+async def missing_movies(limit):
+    data = await radarr._req("GET", "wanted/missing", params={"page": 1, "pageSize": limit, "monitored": "true"})
+    return [(m.get("title", "?"), {"movieId": m["id"]}) for m in data.get("records", [])]
+
+
+async def missing_episodes(limit):
+    data = await sonarr._req("GET", "wanted/missing", params={"page": 1, "pageSize": 100, "monitored": "true",
+                                                               "includeSeries": "true"})
+    seen, out = set(), []
+    for e in data.get("records", []):
+        sid = e.get("seriesId")
+        if sid in seen:
+            continue
+        seen.add(sid)
+        title = (e.get("series") or {}).get("title", "?")
+        out.append((f"{title} S{e.get('seasonNumber', 0):02d}E{e.get('episodeNumber', 0):02d}", {"episodeId": e["id"]}))
+        if len(out) >= limit:
+            break
+    return out
+
+
+@bot.tree.command(name="pourquoi", description="Comprendre pourquoi un film ou une série ne se télécharge pas")
+@app_commands.describe(titre="Titre déjà demandé (vide = les premiers films et séries en attente)")
+async def pourquoi(interaction: discord.Interaction, titre: str = ""):
+    if not allowed(interaction):
+        return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    targets = []  # (arr, libellé, paramètres de recherche)
+    try:
+        if titre:
+            key = ac.norm(titre)
+            for m in await radarr._req("GET", "movie"):
+                if key in ac.norm(m.get("title", "")) and not m.get("hasFile"):
+                    targets.append((radarr, f"🎬 {m['title']}", {"movieId": m["id"]}))
+            series = [s for s in await sonarr._req("GET", "series") if key in ac.norm(s.get("title", ""))]
+            for s in series[:3]:
+                eps = await sonarr._req("GET", "episode", params={"seriesId": s["id"]})
+                eps = [e for e in eps if e.get("monitored") and not e.get("hasFile") and e.get("airDateUtc")
+                       and e["airDateUtc"] < datetime.now(timezone.utc).isoformat()]
+                if eps:
+                    e = min(eps, key=lambda e: (e.get("seasonNumber", 0) or 999, e.get("episodeNumber", 0)))
+                    targets.append((sonarr, f"📺 {s['title']} S{e['seasonNumber']:02d}E{e['episodeNumber']:02d}",
+                                    {"episodeId": e["id"]}))
+        else:
+            targets += [(radarr, f"🎬 {t}", p) for t, p in await missing_movies(3)]
+            targets += [(sonarr, f"📺 {t}", p) for t, p in await missing_episodes(3)]
+    except Exception as ex:
+        return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
+    if not targets:
+        msg = (f"Rien d'attendu pour **{titre}** : pas demandé, ou déjà téléchargé." if titre
+               else "Aucun film ni épisode en attente : tout ce qui est demandé est déjà téléchargé.")
+        return await interaction.followup.send(msg, ephemeral=True)
+    targets = targets[:6]
+    lines = await asyncio.gather(*(release_report(arr, label, params) for arr, label, params in targets))
+    e = discord.Embed(title="🔎 Pourquoi ça ne se télécharge pas", color=0x23A0B3, description="\n\n".join(lines)[:4000])
+    e.set_footer(text="Recherche faite à l'instant sur les trackers, sans rien télécharger.")
+    await interaction.followup.send(embed=e, ephemeral=True)
 
 
 @bot.tree.command(name="etat", description="Vérifier que toute l'installation fonctionne")
