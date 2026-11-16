@@ -25,7 +25,7 @@ Une seule installation Docker : seuls 3 secrets et 3 dossiers sont à renseigner
 
 **Automatismes**
 
-- **Choix des torrents** : VO privilégiée, versions uniquement doublées en français rejetées, minimum de seeders, qualité 1080p.
+- **Choix des torrents** : VO privilégiée, versions uniquement doublées en français rejetées, minimum de 10 seeders (réglable avec `MIN_SEEDERS`), qualité 1080p.
 - **Animes** reconnus tout seuls et rangés dans `Anims` : VF > VOSTFR > multi-sous-titres > VOSTEN, avec remplacement automatique quand une meilleure version sort. Deux trackers d'anime publics (nekoBT, Nyaa.si) sont ajoutés d'office.
 - **Recherche quotidienne** des films et épisodes manquants.
 - **Notifications** : la personne qui fait une demande reçoit un message privé quand c'est prêt ; les autres cliquent sur **🔔 Me notifier**.

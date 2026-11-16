@@ -301,7 +301,7 @@ async def setup_webhook(name, url, key, log):
 
 
 # ---------------- Préférences : VO + seeders ----------------
-MIN_SEEDERS = int(os.getenv("MIN_SEEDERS", "3") or 3)
+MIN_SEEDERS = int(os.getenv("MIN_SEEDERS", "10") or 10)
 PREFERRED_PROFILE = "HD-1080p"
 
 CF_VO = "VO (langue originale)"
