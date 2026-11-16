@@ -16,6 +16,7 @@ Au démarrage, le bot configure automatiquement toute la stack (voir autoconfig.
 import asyncio
 import json
 import os
+import time
 
 import aiohttp
 import discord
@@ -706,10 +707,12 @@ class PickView(BaseView):
         options = []
         for i, r in enumerate(results):
             already = " (déjà présent)" if r.get("id") else ""
+            title = " ".join(str(r.get("title") or "Sans titre").split())
+            overview = " ".join(str(r.get("overview") or "").split())
             options.append(discord.SelectOption(
-                label=f"{r['title']} ({r.get('year') or '?'}){already}"[:100], value=str(i),
+                label=f"{title} ({r.get('year') or '?'}){already}"[:100], value=str(i),
                 emoji="🎌" if is_anime(r) else None,
-                description=(r.get("overview") or "")[:95] or None))
+                description=(overview[:97] + "…" if len(overview) > 98 else overview) or None))
         select = discord.ui.Select(placeholder="Choisis le bon titre…", options=options)
         select.callback = self.on_pick
         self.add_item(select)
@@ -1135,6 +1138,10 @@ async def on_app_command_error(interaction: discord.Interaction, error):
         print(f"[discord] /{interaction.command.name if interaction.command else '?'} expirée "
               f"(réponse après 3 s) — ignorée", flush=True)
         return
+    if getattr(getattr(error, "original", error), "code", None) == 40060:
+        print("[discord] une autre copie du bot a déjà pris cette commande : deux bots tournent avec le "
+              "même DISCORD_TOKEN (vieux conteneur, ou bot lancé sur un PC). N'en garder qu'un.", flush=True)
+        return
     import traceback
     traceback.print_exception(error)
     try:
@@ -1163,18 +1170,39 @@ def allowed(interaction):
     return not ALLOWED_ROLE or any(r.name == ALLOWED_ROLE for r in getattr(interaction.user, "roles", []))
 
 
+LOOKUP_TIMEOUT = 25  # secondes : au-delà, on prévient plutôt que de laisser « réfléchit… » tourner
+
+
 async def request(interaction, arr: Arr, titre: str):
     if not allowed(interaction):
         return await interaction.response.send_message("⛔ Tu n'as pas le rôle requis.", ephemeral=True)
-    await interaction.response.defer(ephemeral=True)
+    started = time.monotonic()
+    print(f"[discord] /{interaction.command.name} « {titre} » demandé par {interaction.user}", flush=True)
+    await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        results = (await arr.lookup(titre))[:10]
-    except Exception as ex:
-        return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
-    if not results:
-        return await interaction.followup.send(f"Aucun résultat pour **{titre}**.", ephemeral=True)
-    await interaction.followup.send(f"🔎 Résultats pour **{titre}** :",
-                                    view=PickView(arr, results, interaction.user.id), ephemeral=True)
+        try:
+            results = (await asyncio.wait_for(arr.lookup(titre), LOOKUP_TIMEOUT))[:10]
+        except (asyncio.TimeoutError, TimeoutError):
+            print(f"[discord] {arr.name} n'a pas répondu à la recherche « {titre} » en {LOOKUP_TIMEOUT} s", flush=True)
+            return await interaction.followup.send(
+                f"⏳ {arr.name} n'a pas répondu en {LOOKUP_TIMEOUT} s à la recherche « {titre} ». "
+                f"Il redémarre peut-être ou n'arrive pas à joindre sa base de films (Internet du NAS ?). "
+                f"Réessaie dans une minute, et tape /etat si ça continue.", ephemeral=True)
+        except Exception as ex:
+            print(f"[discord] recherche « {titre} » dans {arr.name} impossible : {ac.why(ex)}", flush=True)
+            return await interaction.followup.send(f"❌ {arr.name} : {ac.why(ex)}", ephemeral=True)
+        print(f"[discord] {arr.name} : {len(results)} résultat(s) pour « {titre} » "
+              f"en {time.monotonic() - started:.1f} s", flush=True)
+        if not results:
+            return await interaction.followup.send(
+                f"Aucun résultat pour **{titre}**. Vérifie l'orthographe ou essaie le titre original.", ephemeral=True)
+        await interaction.followup.send(f"🔎 Résultats pour **{titre}** :",
+                                        view=PickView(arr, results, interaction.user.id), ephemeral=True)
+    except discord.HTTPException as ex:
+        # Discord a refusé le message (menu invalide…) : on le dit au lieu de laisser « réfléchit… » tourner
+        print(f"[discord] réponse à « {titre} » refusée par Discord : {ex}", flush=True)
+        await interaction.followup.send(f"❌ Impossible d'afficher les résultats pour **{titre}** "
+                                        f"({str(ex)[:150]}).", ephemeral=True)
 
 
 @bot.tree.command(name="film", description="Demander un film (Radarr)")
