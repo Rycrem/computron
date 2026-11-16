@@ -449,10 +449,35 @@ QBIT_LIMITS = {
     "upnp": False,                   # inutile dans Docker
     "queueing_enabled": True,
     "max_active_downloads": 3,       # les autres attendent leur tour
-    "max_active_uploads": 3,
-    "max_active_torrents": 6,
+    "max_active_uploads": -1,        # partage jamais mis en file : un torrent en pause = « hit and run »
+    "max_active_torrents": -1,
     "dont_count_slow_torrents": True,
+    "max_ratio_enabled": False,      # pas d'arrêt du partage à un ratio / une durée : les trackers privés
+    "max_seeding_time_enabled": False,  # exigent un temps de partage minimum (voir HNR_JOURS)
+    "max_inactive_seeding_time_enabled": False,
 }
+
+# Trackers privés (IPTorrents…) : un torrent retiré avant ce temps de partage ou ce ratio
+# compte comme « hit and run ». Le bot refuse de le retirer avant (voir /qb).
+HNR_DAYS = float(os.getenv("HNR_JOURS", "14") or 14)
+HNR_RATIO = float(os.getenv("HNR_RATIO", "1") or 1)
+PRIVATE_TRACKERS = ("iptorrents", "stackoverflow.tech", "bgp.technology", "empirehost.me")
+
+
+def is_private(t):
+    """Torrent d'un tracker privé (champ « private » de qBittorrent 5, sinon adresse du tracker)."""
+    if t.get("private") is not None:
+        return bool(t["private"])
+    return any(d in str(t.get("tracker", "")).lower() for d in PRIVATE_TRACKERS)
+
+
+def hnr_left(t):
+    """Secondes de partage encore dues avant de pouvoir retirer le torrent sans « hit and run » (0 = libre)."""
+    if not is_private(t) or t.get("ratio", 0) >= HNR_RATIO:
+        return 0
+    if t.get("progress", 0) < 1 and not t.get("downloaded"):
+        return 0  # rien téléchargé : pas de « hit and run »
+    return max(0, int(HNR_DAYS * 86400 - t.get("seeding_time", 0)))
 
 
 async def setup_qbittorrent(log):
@@ -469,7 +494,7 @@ async def setup_qbittorrent(log):
             if r.status >= 400:
                 raise RuntimeError(f"qBittorrent a répondu {r.status}")
         log(f"qBittorrent : limites appliquées ({QBIT_LIMITS['max_connec']} connexions max, TCP seulement, "
-            f"{QBIT_LIMITS['max_active_downloads']} téléchargements à la fois) pour ne pas saturer le réseau du NAS")
+            f"{QBIT_LIMITS['max_active_downloads']} téléchargements à la fois, partage jamais arrêté)")
 
 
 async def run(log=print):

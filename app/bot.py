@@ -210,7 +210,20 @@ async def qb_embed(filtre="actifs", page=0):
     return e, chunk, page, pages
 
 
-async def qb_delete(hashes, delete_files: bool):
+def hnr_text(t):
+    left = ac.hnr_left(t)
+    days = left / 86400
+    when = f"{days:.0f} jour(s)" if days >= 1 else f"{max(1, left // 3600)} h"
+    return f"encore {when} de partage (ou ratio {ac.HNR_RATIO:g})"
+
+
+async def qb_delete(hashes, delete_files: bool, force=False):
+    if not force:  # jamais de retrait d'un torrent de tracker privé encore dû (« hit and run »)
+        protected = {t["hash"] for t in await qb_torrents() if ac.hnr_left(t)}
+        hashes = [h for h in hashes if h not in protected]
+        if not hashes:
+            raise RuntimeError("torrent(s) de tracker privé encore en partage obligatoire : rien n'a été retiré "
+                               "(sinon « hit and run »).")
     async with http.post(f"{ac.QBIT}/api/v2/torrents/delete", headers={"Referer": ac.QBIT},
                          data={"hashes": "|".join(hashes), "deleteFiles": "true" if delete_files else "false"}) as r:
         if r.status != 200:
@@ -285,10 +298,7 @@ async def cancel_download(torrent_hash, retry: bool):
        retry=False : supprime le téléchargement et retire le titre de Radarr/Sonarr."""
     arr, records = await find_in_queue(torrent_hash)
     if not arr:
-        async with http.post(f"{ac.QBIT}/api/v2/torrents/delete", headers={"Referer": ac.QBIT},
-                             data={"hashes": torrent_hash, "deleteFiles": "true"}) as r:
-            if r.status != 200:
-                raise RuntimeError(f"qBittorrent a répondu {r.status}")
+        await qb_delete([torrent_hash], True, force=True)  # en cours : choix confirmé après avertissement
         return "Torrent supprimé de qBittorrent (il n'était suivi ni par Radarr ni par Sonarr)."
 
     ids = [r["id"] for r in records]
@@ -463,9 +473,17 @@ class QbView(BaseView):
         h = interaction.data["values"][0]
         t = self.torrents.get(h, {"name": "ce téléchargement", "progress": 0})
         name, parent = t["name"], (self.origin, self.filtre, self.page)
-        if t["progress"] < 1:
+        if t["progress"] >= 1 and ac.hnr_left(t):
             return await interaction.response.send_message(
-                f"Que faire de **{name[:150]}** ?\n"
+                f"🔒 **{name[:150]}** vient d'un tracker privé : il doit rester en partage, {hnr_text(t)}. "
+                f"Le retirer avant compterait comme « hit and run ». Le film / l'épisode est déjà rangé "
+                f"dans la médiathèque, tu peux le regarder.", ephemeral=True)
+        if t["progress"] < 1:
+            hnr = (f"\n⚠️ Tracker privé : si une partie est déjà téléchargée, l'annuler peut compter comme "
+                   f"« hit and run ». Mieux vaut le laisser finir."
+                   if ac.is_private(t) and t.get("downloaded") else "")
+            return await interaction.response.send_message(
+                f"Que faire de **{name[:150]}** ?{hnr}\n"
                 f"• **Annuler définitivement** : supprime le téléchargement et retire le titre de Radarr/Sonarr (tu pourras le redemander).\n"
                 f"• **Chercher une autre version** : écarte ce torrent et en prend un autre.",
                 view=ConfirmCancelView(h, name, parent), ephemeral=True)
@@ -491,10 +509,13 @@ class QbView(BaseView):
         except Exception as ex:
             return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
         pending = [t for t in done if t["hash"].upper() in queued]
-        ready = [t for t in done if t["hash"].upper() not in queued]
+        locked = [t for t in done if t["hash"].upper() not in queued and ac.hnr_left(t)]
+        ready = [t for t in done if t["hash"].upper() not in queued and not ac.hnr_left(t)]
+        kept = (f"\n🔒 {len(locked)} torrent(s) de tracker privé gardé(s) en partage "
+                f"(sinon « hit and run »)." if locked else "")
         if not ready:
-            return await interaction.followup.send("Aucun torrent terminé à retirer.", ephemeral=True)
-        skipped = f"\n({len(pending)} pas encore rangé(s) dans la médiathèque, laissé(s) de côté.)" if pending else ""
+            return await interaction.followup.send("Aucun torrent terminé à retirer." + kept, ephemeral=True)
+        skipped = (f"\n({len(pending)} pas encore rangé(s) dans la médiathèque, laissé(s) de côté.)" if pending else "") + kept
         await interaction.followup.send(
             f"Retirer **{len(ready)} torrent(s) terminé(s)** ({size(sum(t['size'] for t in ready))}) "
             f"de qBittorrent ?{skipped}\n"
@@ -515,8 +536,13 @@ class QbView(BaseView):
             shown = qb_filter(await qb_torrents(), self.filtre)
         except Exception as ex:
             return await interaction.followup.send(f"❌ {ex}", ephemeral=True)
+        locked = [t for t in shown if ac.hnr_left(t)]
+        shown = [t for t in shown if not ac.hnr_left(t)]
+        kept = (f"🔒 {len(locked)} torrent(s) de tracker privé gardé(s) : ils doivent rester en partage "
+                f"(sinon « hit and run »)." if locked else "")
         if not shown:
-            return await interaction.followup.send("Aucun torrent à supprimer dans cet onglet.", ephemeral=True)
+            return await interaction.followup.send(("Aucun torrent à supprimer dans cet onglet. " + kept).strip(),
+                                                   ephemeral=True)
         try:
             queued = await queued_hashes()
         except Exception:
@@ -536,6 +562,8 @@ class QbView(BaseView):
         if unranged:
             lines.append(f"⚠️ **{len(unranged)} terminé(s) pas encore rangé(s)** dans la médiathèque : "
                          f"ils seront perdus.")
+        if kept:
+            lines.append(kept)
         await interaction.followup.send("\n".join(lines), ephemeral=True,
                                         view=ConfirmWipeView([t["hash"] for t in shown], len(shown),
                                                              (self.origin, self.filtre, self.page)))
@@ -1394,7 +1422,8 @@ async def help_cmd(interaction: discord.Interaction):
         "listent tous les torrents de qBittorrent.\n"
         "Son menu **Retirer ou annuler un torrent…** : un téléchargement en cours peut être annulé "
         "ou remplacé par une autre version, un torrent terminé retiré (avec ou sans ses fichiers). "
-        "🧹 retire d'un coup tous les terminés déjà rangés. 🗑️ **Tout supprimer** efface tous les torrents "
+        "🧹 retire d'un coup tous les terminés déjà rangés. 🔒 Les torrents de trackers privés (IPTorrents) restent en partage "
+        f"{ac.HNR_DAYS:g} jours (ou ratio {ac.HNR_RATIO:g}) avant de pouvoir être retirés, pour éviter les « hit and run ». 🗑️ **Tout supprimer** efface tous les torrents "
         "de l'onglet affiché (en cours, terminés ou tous) et leurs fichiers du disque, après confirmation.\n"
         "`/mangas` (ou l'onglet **📚 Mangas** de `/qb`) — chapitres téléchargés / total pour chaque manga, "
         "chapitre en cours, file d'attente, et 🔁 pour réessayer les chapitres en erreur."))
