@@ -20,3 +20,7 @@ Thumbs.db
 
 # Code téléchargé par la mise à jour automatique
 arr-bot-code/
+
+# Claude Code : configuration locale (peut contenir des secrets)
+.claude/settings.local.json
+.mcp.json
