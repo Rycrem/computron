@@ -113,7 +113,7 @@ Tous les fichiers sont nommés et accompagnés de métadonnées, ce qui les rend
 
 - Sans Internet, ou si la nouvelle version est incomplète ou ne se compile pas, la version déjà installée est gardée : le bot démarre quand même.
 - `MAJ_AUTO=non` dans `.env` désactive la mise à jour ; `CODE_BRANCH` permet de suivre une autre branche.
-- Ce qui ne se met **pas** à jour tout seul : `docker-compose.yml` et les images (Radarr, Sonarr…). Pour eux :
+- Ce qui ne se met **pas** à jour tout seul : `docker-compose.yml` et les images (Radarr, Sonarr…). Les versions des images sont **figées** dans `docker-compose.yml` (pas de `:latest`) : un redéploiement réinstalle toujours la même version, et une mise à jour d'appli passe par un changement de numéro dans ce fichier. Pour les appliquer :
 
 ```bash
 cd /volume1/docker/mediatheque
@@ -129,6 +129,7 @@ Sur UGOS sans SSH : remplace les fichiers du dossier par ceux du nouveau ZIP (en
 - **Aucun secret n'est stocké dans le dépôt.** Le token Discord et le cookie IPTorrents vivent uniquement dans `.env`, ignoré par Git (`.gitignore`). Vérifie avec `git status` avant chaque `git push` : `.env` ne doit jamais apparaître.
 - **Token publié par erreur ?** Régénère-le immédiatement (**Reset Token**), même si tu as supprimé le commit : l'historique Git reste lisible.
 - Les interfaces web (Radarr, Sonarr, Jackett, qBittorrent, Suwayomi) n'ont pas de mot de passe au départ. Garde-les sur ton réseau local et **n'ouvre jamais leurs ports sur ta box**. Pour un accès à distance, passe par un VPN (Tailscale, WireGuard…).
+- **Sonarr doit rester en version 4.0.16.2944 ou plus récente** (faille CVE-2026-30975 : contournement de l'authentification). Vérifie dans Sonarr → **Système → État**. La version figée dans `docker-compose.yml` respecte ce minimum.
 - Le mot de passe de qBittorrent est généré au premier démarrage et écrit dans `CONFIG_DIR/qbittorrent/MOT_DE_PASSE_QBITTORRENT.txt`.
 
 ## Dépannage
