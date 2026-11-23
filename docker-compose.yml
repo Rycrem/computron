@@ -6,6 +6,12 @@
 #  (copie .env.example en .env, à côté de ce fichier, puis remplis-le).
 #  Tout le reste se configure tout seul au premier démarrage, et le code
 #  du bot se met à jour depuis GitHub à chaque redémarrage (voir app/maj_code.py).
+#
+#  Versions des images : figées volontairement (pas de :latest), pour
+#  qu'un redéploiement installe toujours exactement la même chose.
+#  Pour mettre à jour une appli, changer son numéro ci-dessous puis
+#  redéployer le projet. Les tags « version-… » de linuxserver gardent la
+#  version de l'appli et reçoivent seulement les correctifs du système.
 # ==================================================================
 
 x-ids: &ids
@@ -16,7 +22,7 @@ x-ids: &ids
 services:
   # ---- Bot Discord ------------------------------------------------
   arr-bot:
-    image: python:3.12-slim
+    image: python:3.12.16-slim
     container_name: arr-bot
     # À chaque démarrage : récupère la dernière version du code sur GitHub, puis lance le bot
     command: sh -c "python -u /livre/maj_code.py && pip install --no-cache-dir -q discord.py aiohttp tzdata && cd /code/app && exec python -u bot.py"
@@ -39,7 +45,7 @@ services:
 
   # ---- Préparation (tourne une fois puis s'arrête, c'est normal) ---
   init:
-    image: python:3.12-slim
+    image: python:3.12.16-slim
     container_name: media-init
     command: sh -c "python -u /livre/maj_code.py && python -u /code/app/init_qbit.py"
     environment:
@@ -59,7 +65,7 @@ services:
 
   # ---- Mangas / manhwas (chapitre par chapitre) --------------------
   suwayomi:
-    image: ghcr.io/suwayomi/suwayomi-server:stable
+    image: ghcr.io/suwayomi/suwayomi-server:v2.4.2373
     container_name: suwayomi
     user: "${PUID:-1000}:${PGID:-10}"
     environment:
@@ -79,7 +85,7 @@ services:
     restart: unless-stopped
 
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
+    image: lscr.io/linuxserver/qbittorrent:version-5.3.0_v2.1.2
     container_name: qbittorrent
     environment:
       <<: *ids
@@ -97,7 +103,7 @@ services:
     restart: unless-stopped
 
   jackett:
-    image: lscr.io/linuxserver/jackett:latest
+    image: lscr.io/linuxserver/jackett:version-v0.25.24
     container_name: jackett
     environment:
       <<: *ids
@@ -108,7 +114,7 @@ services:
     restart: unless-stopped
 
   radarr:
-    image: lscr.io/linuxserver/radarr:latest
+    image: lscr.io/linuxserver/radarr:version-7.0.3.10918
     container_name: radarr
     environment:
       <<: *ids
@@ -123,7 +129,7 @@ services:
     restart: unless-stopped
 
   sonarr:
-    image: lscr.io/linuxserver/sonarr:latest
+    image: lscr.io/linuxserver/sonarr:version-4.0.20.3014   # >= 4.0.16.2944 obligatoire (faille CVE-2026-30975)
     container_name: sonarr
     environment:
       <<: *ids
